@@ -1,6 +1,6 @@
+#include <math.h>
 #include "knn.c"
 #include "greatest.h"
-
 #include "terminal_user_input.h"
 
 //Defining tolerances for tests
@@ -81,7 +81,7 @@ TEST distance_3_dimensions(void) {
   Comparison_Point point1 = {array1, NULL};
 
   float array2[3] = {5.0, 5.0, 5.0};
-  Point point2 = {array2, 0, NULL};
+  Point point2 = {array2, 0};
 
   ASSERT_IN_RANGE(5.1962, point_distance(point1, point2, 3), FLOAT_TOLERANCE);
   PASS();
