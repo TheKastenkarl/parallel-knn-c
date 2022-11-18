@@ -6,7 +6,7 @@ CFLAGS = -Wall -I.
 all: test
 
 knn: knn.c
-	$(CC) knn.c terminal_user_input.c $(CFLAGS) -DNDEBUG -o knn
+	$(CC) knn.c terminal_user_input.c $(CFLAGS) -DNDEBUG -lm -o knn
 
 test: knn.c
 	$(CC) terminal_user_input.c tests.c $(CFLAGS) -Wextra -lm -o test_knn

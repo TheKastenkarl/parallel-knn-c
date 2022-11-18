@@ -8,3 +8,10 @@ Uses the following code:
   + Nate Derbinsky's [kNN-Algorithm](https://derbinsky.info/public/_custom/teaching/wit-f15/comp4050/slides/lec02_knn.pdf)
   + UCI Machine Learning Repository [Iris Dataset](https://archive.ics.uci.edu/ml/datasets/iris)
  - Abstraction. Functions named to create functions that operate on structures.
+
+## Compile and run code
+```console
+make # Compiles and runs tests
+make knn # Compiles knn code
+./knn # Run knn code
+```

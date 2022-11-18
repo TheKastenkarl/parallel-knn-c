@@ -54,3 +54,4 @@ dkms.conf
 # Misc
 .vscode/
 test_knn
+knn
