@@ -1,6 +1,6 @@
 #Sourced: http://www.cs.colby.edu/maxwell/courses/tutorials/maketutor/
 CC = gcc
-CFLAGS = -Wall -I.
+CFLAGS = -Wall -I. -g -O0
 # Ultra debug mode  -Q -v -da -g -O0
 #from: https://gcc.gnu.org/bugs/segfault.html
 all: test

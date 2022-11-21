@@ -3,14 +3,13 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
-
 #include <assert.h>
-#include "greatest.h"
 
+#include "greatest.h"
 #include "file_input_output.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE
+//#define EVALUATE
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -95,7 +94,6 @@ int compare_int(const void *v1, const void *v2) {
   return n1 - n2;
 }
 
-
 //Calculate the mode
 int mode(int *values, int num_values) {
   //Sort the array
@@ -149,7 +147,6 @@ int mode(int *values, int num_values) {
 }
 
 //Doing a k nearest neighbour search
-
 int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
   //Warn if k is even
   if (k % 2 == 0) {
@@ -338,8 +335,6 @@ Comparison_Point read_comparison_point_user(int num_dimensions) {
     printf("%dth dimension: ", i);
     user_point.dimension[i] = read_float("");
   }
-
-  //TODO fix memory allocation
   return user_point;
 }
 
@@ -562,7 +557,7 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
 
 
   }
-  accuracy =  (float)sum_correct / (float)benchmark_dataset->num_points;
+  accuracy = (float)sum_correct / (float)benchmark_dataset->num_points;
 
   //Print out the percent accuracy for that value of k
   #ifdef DEBUG
@@ -604,7 +599,8 @@ int main (int argc, char **argv) {
     Comparison_Point compare = read_comparison_point_user(generic_dataset.dimensionality);
     int k = read_integer("k: ");
     int category = knn_search(k, compare, &generic_dataset);
-    free(compare.neighbour);
+    free(compare.dimension);
+    compare.dimension = NULL;
 
     #ifdef DEBUG
     printf("[DEBUG] Category is: %d\n", category);
@@ -612,7 +608,7 @@ int main (int argc, char **argv) {
 
     my_string class = classify(class_list, category);
     printf("Point classified as: %s\n", class.str);
-    another_point = read_boolean("Classfy another point? ");
+    another_point = read_boolean("Classify another point? ");
   } while(another_point);
   #endif
   #ifdef EVALUATE
