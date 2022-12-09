@@ -1,5 +1,5 @@
 #include <math.h>
-#include "knn.c"
+#include "knn.cu"
 #include "greatest.h"
 #include "terminal_user_input.h"
 
@@ -193,7 +193,7 @@ TEST find_3_nearest_neighbour(void) {
 
 TEST classify_int(void) {
   //The class integer to be selected
-  int class = 0;
+  int class_int = 0;
 
   //Using only the minimum 1 categories
   Classifier_List flower_map;
@@ -201,9 +201,9 @@ TEST classify_int(void) {
 
   strcpy(flower_map.categories[0].str, "Iris");
 
-  my_string category = classify(flower_map, class);
+  my_string class_string = classify(flower_map, class_int);
 
-  ASSERT_STR_EQ("Iris", category.str);
+  ASSERT_STR_EQ("Iris", class_string.str);
   PASS();
   free(flower_map.categories);
 }

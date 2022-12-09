@@ -1,4 +1,4 @@
-k - Nearest Neighbour Implementation in C
+Parallel k-Nearest-Neighbour implementation in CUDA C/C++
 =========================================
 
 Uses the following code:

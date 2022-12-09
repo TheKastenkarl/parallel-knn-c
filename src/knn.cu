@@ -8,7 +8,7 @@
 #include "greatest.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE 1 // Choose between evaluation mode and user mode
+#define EVALUATE 0 // Choose between evaluation mode and user mode
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -50,12 +50,6 @@ typedef struct comparision_point {
   float *dimension;
   Point_Neighbour_Relationship *neighbour;
 } Comparison_Point;
-
-//Apparently C doesn't have boolean types
-typedef enum boolean {
-  false,
-  true
-} bool;
 
 //Distance
 //Return: number with the distance, a float
@@ -233,8 +227,8 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
 //Function that takes in a classification integer, and returns a classification string
 //Requires a map between the integers and the string in the form of a classification_map datatype
 my_string classify(Classifier_List category_map, int category) {
-  my_string class = category_map.categories[category];
-  return class;
+  my_string class_string = category_map.categories[category];
+  return class_string;
 }
 
 Point read_point_user(int num_dimensions, int num_categories) {
@@ -374,7 +368,7 @@ int get_class_num(my_string in_string, Classifier_List *class_list) {
   #ifdef DEBUG
   printf("[DEBUG] Class list categories: %d\n", class_list->num_categories);
   #endif
-  class_list->categories = realloc(class_list->categories, sizeof(my_string) * class_list->num_categories);
+  class_list->categories = (my_string*) realloc(class_list->categories, sizeof(my_string) * class_list->num_categories);
   class_list->categories[class_list->num_categories - 1] = in_string;
   return class_list->num_categories - 1;
 }
@@ -430,8 +424,8 @@ int count_lines(my_string filename) {
 
 Dataset new_dataset() {
   Point *points = {NULL};
-  Dataset new = {0, 0, points};
-  return new;
+  Dataset new_dataset = {0, 0, points};
+  return new_dataset;
 }
 
 //function that takes in a line, and returns a point
@@ -507,7 +501,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
 Classifier_List new_classifier_list() {
   int num_categories = 0;
   my_string *categories;
-  categories = malloc(sizeof(my_string));
+  categories = (my_string*) malloc(sizeof(my_string));
   Classifier_List new_list = {categories, num_categories};
   return new_list;
 }
@@ -606,8 +600,8 @@ int main (int argc, char **argv) {
     printf("[DEBUG] Category is: %d\n", category);
     #endif
 
-    my_string class = classify(class_list, category);
-    printf("Point classified as: %s\n", class.str);
+    my_string class_string = classify(class_list, category);
+    printf("Point classified as: %s\n", class_string.str);
     another_point = read_boolean("Classify another point? ");
   } while(another_point);
   #endif

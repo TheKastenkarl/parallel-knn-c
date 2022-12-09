@@ -1,18 +1,16 @@
 # From https://x.momo86.net/?p=29
-
 CXX=g++
 CXXFLAGS=-std=c++11 -I./include -O3 -g -G -Xcompiler -Wall -lm
 
 NVCC=nvcc
 ARCH=sm_75
-NVCCFLAGS= -I./include -arch=$(ARCH) -std=c++11 -O3 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm
+NVCCFLAGS=-I./include -arch=$(ARCH) -std=c++11 -O3 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm
 
 SRCDIR:=src
-SRCS=$(shell find $(SRCDIR) -name '*.cu' -o -name '*.cpp' -o -name '*.c')
+SRCS=$(shell find $(SRCDIR) -name '*.cu' -o -name '*.cpp')
 
 OBJDIR:=src
-OBJS=$(subst $(SRCDIR),$(OBJDIR), $(SRCS))
-OBJS:=$(subst .c,.o,$(OBJS))
+OBJS:=$(subst $(SRCDIR),$(OBJDIR), $(SRCS))
 OBJS:=$(subst .cpp,.o,$(OBJS))
 OBJS:=$(subst .cu,.o,$(OBJS))
 
@@ -26,6 +24,7 @@ OBJS_TEST:=$(filter-out $(SRCDIR)/$(TARGET).o, $(OBJS))
 all: test knn
 
 knn: CXXFLAGS += -DNDEBUG
+knn: NVCCFLAGS += -DNDEBUG
 knn: dir $(BIN)/$(TARGET)
 
 test: dir $(BIN)/$(TEST_TARGET)
