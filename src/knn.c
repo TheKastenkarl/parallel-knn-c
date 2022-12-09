@@ -6,10 +6,9 @@
 #include <assert.h>
 
 #include "greatest.h"
-#include "file_input_output.h"
 #include "terminal_user_input.h"
 
-//#define EVALUATE
+#define EVALUATE 1 // Choose between evaluation mode and user mode
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -593,7 +592,8 @@ int main (int argc, char **argv) {
   //This is in user mode:
 
   Dataset generic_dataset = read_dataset_file(filename, &class_list);
-  #ifndef EVALUATE
+
+  #if !EVALUATE
   bool another_point = true;
   do {
     Comparison_Point compare = read_comparison_point_user(generic_dataset.dimensionality);
@@ -611,7 +611,7 @@ int main (int argc, char **argv) {
     another_point = read_boolean("Classify another point? ");
   } while(another_point);
   #endif
-  #ifdef EVALUATE
+  #if EVALUATE
   for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
     printf("k: %d, accuracy: %lf\n", k, evaluate_knn(k, &generic_dataset));
   }

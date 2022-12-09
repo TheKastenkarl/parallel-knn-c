@@ -1,13 +1,58 @@
-#Sourced: http://www.cs.colby.edu/maxwell/courses/tutorials/maketutor/
-CC = gcc
-CFLAGS = -Wall -I. -g -O0
-# Ultra debug mode  -Q -v -da -g -O0
-#from: https://gcc.gnu.org/bugs/segfault.html
-all: test
+# From https://x.momo86.net/?p=29
 
-knn: knn.c
-	$(CC) knn.c terminal_user_input.c $(CFLAGS) -DNDEBUG -lm -o knn
+CXX=g++
+CXXFLAGS=-std=c++11 -I./include -O3 -g -G -Xcompiler -Wall -lm
 
-test: knn.c
-	$(CC) terminal_user_input.c tests.c $(CFLAGS) -Wextra -lm -o test_knn
-	./test_knn | contrib/greenest
+NVCC=nvcc
+ARCH=sm_75
+NVCCFLAGS= -I./include -arch=$(ARCH) -std=c++11 -O3 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm
+
+SRCDIR:=src
+SRCS=$(shell find $(SRCDIR) -name '*.cu' -o -name '*.cpp' -o -name '*.c')
+
+OBJDIR:=src
+OBJS=$(subst $(SRCDIR),$(OBJDIR), $(SRCS))
+OBJS:=$(subst .c,.o,$(OBJS))
+OBJS:=$(subst .cpp,.o,$(OBJS))
+OBJS:=$(subst .cu,.o,$(OBJS))
+
+BIN:=bin
+TARGET:=knn
+TEST_TARGET:=test
+
+OBJS_KNN:=$(filter-out $(SRCDIR)/$(TEST_TARGET).o, $(OBJS))
+OBJS_TEST:=$(filter-out $(SRCDIR)/$(TARGET).o, $(OBJS))
+
+all: test knn
+
+knn: CXXFLAGS += -DNDEBUG
+knn: dir $(BIN)/$(TARGET)
+
+test: dir $(BIN)/$(TEST_TARGET)
+
+dir: ${BIN}
+  
+${BIN}:
+	mkdir -p $(BIN)
+
+$(BIN)/$(TARGET): $(OBJS_KNN)
+	$(NVCC) $(NVCCFLAGS) $+ -o $@
+
+$(BIN)/$(TEST_TARGET): $(OBJS_TEST)
+	$(NVCC) $(NVCCFLAGS) $+ -o $@
+
+$(SRCDIR)/%.o: $(SRCDIR)/%.cu
+	$(NVCC) $(NVCCFLAGS) $< -c -o $@
+
+$(OBJDIR)/%.o: $(SRCDIR)/%.c
+	[ -d $(OBJDIR) ] || mkdir $(OBJDIR)
+	$(NVCC) $(CXXFLAGS) $< -c -o $@
+
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp
+	[ -d $(OBJDIR) ] || mkdir $(OBJDIR)
+	$(NVCC) $(CXXFLAGS) $< -c -o $@
+
+clean:
+	rm -rf $(OBJS)
+	rm -rf $(BIN)/$(TARGET)
+	rm -rf $(BIN)/$(TEST_TARGET)
