@@ -8,7 +8,7 @@
 #include "greatest.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE 0 // Choose between evaluation mode and user mode
+#define EVALUATE 1 // Choose between evaluation mode and user mode
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -508,23 +508,39 @@ Classifier_List new_classifier_list() {
 
 //Takes k as a parameter and also a dataset
 //Measure the accuracy of the knn given a dataset, using the remove one method
-float evaluate_knn(int k, Dataset *benchmark_dataset) {
+float evaluate_knn(int k, Dataset *benchmark_dataset, int num_points_for_evaluation) {
+
+  //for test cases only
+  if (num_points_for_evaluation == -1){
+    num_points_for_evaluation = benchmark_dataset->num_points;
+  }
+
+  
+  // shuffle the dataset randomly
+  srand(5);
+  for (int i = 0; i < benchmark_dataset->num_points - 1; ++i)
+  {
+    int j = rand() % (benchmark_dataset->num_points - i) + i;
+    Point temp = benchmark_dataset->points[i];
+    benchmark_dataset->points[i] = benchmark_dataset->points[j];
+    benchmark_dataset->points[j] = temp;
+  }
 
   float accuracy;
   Dataset comparison_dataset = new_dataset();
   comparison_dataset.dimensionality = benchmark_dataset->dimensionality;
-  comparison_dataset.num_points = benchmark_dataset->num_points - 1;
+  comparison_dataset.num_points = num_points_for_evaluation;
 
   comparison_dataset.points = (Point*)malloc(comparison_dataset.num_points*sizeof(Point));
 
   int sum_correct = 0;
   // Make a copy of the dataset, except missing the i'th term.
-  for (int i = 0; i < benchmark_dataset->num_points; i++) {
+  for (int i = 0; i < num_points_for_evaluation; i++) {
     //Loop through the dataset the number of times there are points
     #ifdef DEBUG
     printf("i:%d\n", i);
     #endif
-    for (int j = 0; j < comparison_dataset.num_points; j++) {
+    for (int j = 0; j < num_points_for_evaluation; j++) {
       //Don't copy the ith term
       //Index will point to the correct term
       int index;
@@ -606,8 +622,52 @@ int main (int argc, char **argv) {
   } while(another_point);
   #endif
   #if EVALUATE
-  for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
-    printf("k: %d, accuracy: %lf\n", k, evaluate_knn(k, &generic_dataset));
+
+  int percentage_of_points_for_evaluation = 0;
+  
+  while (percentage_of_points_for_evaluation < 1 || percentage_of_points_for_evaluation > 100){
+    printf("Percentage of points of the dataset that should be used for evaluation (value between 1 and 100): ");
+    scanf("%d", &percentage_of_points_for_evaluation);
+  }
+
+
+  printf("generic dataset num points %d \n", generic_dataset.num_points);
+  int num_points_for_evaluation = generic_dataset.num_points * percentage_of_points_for_evaluation/100.0;
+  printf("Number of points for the evaluation: %d \n", num_points_for_evaluation);
+
+
+  // read number of k's
+  printf("What is the lowest k that you want to test (value of at least 1)? ");
+  int k_start = 1;
+  scanf("%d", &k_start);
+
+  printf("What is the highest k that you want to test (number of points-1 is the maximum)? ");
+  int k_end = 2;
+  scanf("%d", &k_end);
+
+  printf("In which steps do you want to test k (value of at least 1)? ");
+  int k_step_size = 1;
+  scanf("%d", &k_step_size);
+
+  
+
+  if (k_end >= num_points_for_evaluation){
+    k_end = num_points_for_evaluation - 1;
+  }
+
+  if (k_start >= num_points_for_evaluation){
+    k_start = num_points_for_evaluation - 1;
+  }
+
+  if (k_start < 1){
+    k_start = 1;
+  }
+
+  printf("K values from %d to %d will be tested with a step size of %d \n", k_start, k_end, k_step_size);
+
+
+  for (int k = k_start; k < k_end; k = k + k_step_size) {
+    printf("k: %d, accuracy: %lf\n", k, evaluate_knn(k, &generic_dataset, num_points_for_evaluation));
   }
   //for values of k up to the number of points that exist in the dataset
   #endif

@@ -344,9 +344,9 @@ TEST knn_accuracy(void) {
 
   Point points[5] = {point0, point1, point2, point3, point4};
   Dataset test_dataset = {1, 5, points};
-  evaluate_knn(3, &test_dataset);
+  evaluate_knn(3, &test_dataset, -1);
 
-  ASSERT_IN_RANGE(0.4, evaluate_knn(3, &test_dataset), FLOAT_TOLERANCE);
+  ASSERT_IN_RANGE(0.4, evaluate_knn(3, &test_dataset, -1), FLOAT_TOLERANCE);
   PASS();
 }
 
