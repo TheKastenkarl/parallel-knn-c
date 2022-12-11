@@ -529,18 +529,18 @@ float evaluate_knn(int k, Dataset *benchmark_dataset, int num_points_for_evaluat
   float accuracy;
   Dataset comparison_dataset = new_dataset();
   comparison_dataset.dimensionality = benchmark_dataset->dimensionality;
-  comparison_dataset.num_points = num_points_for_evaluation;
+  comparison_dataset.num_points = num_points_for_evaluation - 1;
 
   comparison_dataset.points = (Point*)malloc(comparison_dataset.num_points*sizeof(Point));
 
   int sum_correct = 0;
   // Make a copy of the dataset, except missing the i'th term.
-  for (int i = 0; i < num_points_for_evaluation; i++) {
+  for (int i = 0; i < num_points_for_evaluation - 1; i++) {
     //Loop through the dataset the number of times there are points
     #ifdef DEBUG
     printf("i:%d\n", i);
     #endif
-    for (int j = 0; j < num_points_for_evaluation; j++) {
+    for (int j = 0; j < num_points_for_evaluation - 1; j++) {
       //Don't copy the ith term
       //Index will point to the correct term
       int index;
