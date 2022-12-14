@@ -225,21 +225,14 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
 }
 
 
-__global__ void calculate_local_knns(int k, Comparison_Point* compare, Dataset* datapoints, Point_Neighbour_Relationship* local_knns) {
+__global__ void calculate_local_knns(const int k, Comparison_Point* compare, Dataset* datapoints, Point_Neighbour_Relationship* local_knns) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= datapoints->num_points) return;
 
   extern __shared__ float s_distances[]; // smemSize = blockDim.x * sizeof(float)
 
   // Calculate distances
-  Point* datapoint = &(datapoints->points[idx]);
-  printf("compare->dimension[2] = %f\n", compare->dimension[2]); // works (only prints after the kernel finished)
-  printf("datapoint->category = %d\n", datapoint->category); // works (only prints after the kernel finished)
-  printf("datapoints->num_points = %d\n", datapoints->num_points); // works (only prints after the kernel finished)
-  
-  printf("datapoints->points[idx].dimension[2] = %f\n", datapoints->points[idx].dimension[2]); // does not work
-
-  float distance = point_distance(*compare, *datapoint, datapoints->dimensionality);
+  float distance = point_distance(*compare, datapoints->points[idx], datapoints->dimensionality);
   s_distances[threadIdx.x] = distance;
   __syncthreads();
 
@@ -253,14 +246,14 @@ __global__ void calculate_local_knns(int k, Comparison_Point* compare, Dataset* 
 
   if (rank_distance < k) { // TODO: What if k > blockDim.x?
     for (int i = 0; i < k; ++i) {
-        local_knns[i * blockIdx.x + rank_distance].neighbour_pointer = datapoint;
+        local_knns[i * blockIdx.x + rank_distance].neighbour_pointer = &(datapoints->points[idx]);
         local_knns[i * blockIdx.x + rank_distance].distance = distance;
     }
   }
 }
 
 
-__global__ void calculate_global_knn(int k, Point_Neighbour_Relationship* local_knns, Point_Neighbour_Relationship* global_knn, int num_local_knn, int num_query_points) {
+__global__ void calculate_global_knn(const int k, Point_Neighbour_Relationship* local_knns, Point_Neighbour_Relationship* global_knn, const int num_local_knn, const int num_query_points, int* block_offsets) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_query_points) return;
 
@@ -268,27 +261,33 @@ __global__ void calculate_global_knn(int k, Point_Neighbour_Relationship* local_
 
   // find the global k-nearest neighbors of from all the local k-nearest neighbors
   //int block_offsets[num_local_knn] = {0}; // initialize to zero; does not work because num_local_knn has to be a constant
-  int* block_offsets;
-  cudaMalloc(&block_offsets, num_local_knn * sizeof(int));
   for (int j = 0; j < num_local_knn; ++j) {
-    block_offsets[j] = 0;
+    block_offsets[idx * num_local_knn + j] = 0;
   }
 
   for (int i = 0; i < k; ++i) {
     float min_distance = FLT_MAX; // initialize to max value
     int min_block_id;
     for (int j = 0; j < num_local_knn; ++j) {
-      float min_dist_block = local_knns[j * k + block_offsets[j]].distance;
+      float min_dist_block = local_knns[j * k + block_offsets[idx * num_local_knn + j]].distance;
       if (min_dist_block < min_distance) {
         min_distance = min_dist_block;
         min_block_id = j;
       }
     }
-    global_knn[i] = local_knns[min_block_id * k + block_offsets[min_block_id]];
-    block_offsets[min_block_id] += 1;       
+    global_knn[i] = local_knns[min_block_id * k + block_offsets[idx * num_local_knn + min_block_id]];
+    block_offsets[idx * num_local_knn + min_block_id] += 1;       
   }
 }
 
+__host__ __device__ void print_dataset(Dataset *dataset_arg); // TODO: Ugly
+
+__global__ void print_dataset_parallel(Dataset *dataset_arg) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= 1) return;
+
+  print_dataset(dataset_arg);
+}
 
 //Doing a k nearest neighbour search
 int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
@@ -302,14 +301,19 @@ int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
   float* compare_point_device;
   Dataset* datapoints_device;
   Point* datapoints_points_device;
+  float* point_dimensions_device[datapoints->num_points]; // array of pointers for storing the dimensions (x-, y-, ... values) of the points in the dataset
   Point_Neighbour_Relationship* local_knns_device;
   Point_Neighbour_Relationship* global_knn_device;
+
 
   //Allocate GPU memory
   cudaMalloc(&compare_device, sizeof(Comparison_Point));
   cudaMalloc(&compare_point_device, datapoints->dimensionality * sizeof(float));
   cudaMalloc(&datapoints_device, sizeof(Dataset));
   cudaMalloc(&datapoints_points_device, datapoints->num_points * sizeof(Point));
+  for (int i = 0; i < datapoints->num_points; ++i) {
+    cudaMalloc(&point_dimensions_device[i], datapoints->dimensionality * sizeof(float));
+  }
   cudaMalloc(&global_knn_device, k * sizeof(Point_Neighbour_Relationship));
 
   //Copy memory to the GPU
@@ -320,30 +324,41 @@ int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
   cudaMemcpy(datapoints_points_device, datapoints->points, datapoints->num_points * sizeof(Point), cudaMemcpyHostToDevice);
   cudaMemcpy(&(datapoints_device->points), &datapoints_points_device, sizeof(Point*), cudaMemcpyHostToDevice); // bind pointer to struct
 
+  for (int i = 0; i < datapoints->num_points; ++i) {
+    cudaMemcpy(point_dimensions_device[i], datapoints->points[i].dimension, datapoints->dimensionality * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(&(datapoints_points_device[i].dimension), &point_dimensions_device[i], sizeof(float*), cudaMemcpyHostToDevice); // bind pointer to struct
+  }
+
+  //print_dataset_parallel<<<1, 32>>>(datapoints_device);
+
   // Initialize the grid and block dimensions and calculate the local k nearest neighbors (k nearest neighbors for every block)
-  int Db_h_local = 64;
-  int Dg_h_local = (datapoints->num_points + Db_h_local - 1) / Db_h_local;
+  const int Db_h_local = 64;
+  const int Dg_h_local = (datapoints->num_points + Db_h_local - 1) / Db_h_local;
   cudaMalloc(&local_knns_device, k * Dg_h_local * sizeof(Point_Neighbour_Relationship));
-  int smemSize = Db_h_local * sizeof(float);
-  printf("datapoints->points[0].dimension[0] = %f\n", datapoints->points[0].dimension[0]);
-  cudaDeviceSynchronize();
-  calculate_local_knns<<<Dg_h_local, Dg_h_local, smemSize>>>(k, compare_device, datapoints_device, local_knns_device);
+  const int smemSize = Db_h_local * sizeof(float);
+  calculate_local_knns<<<Dg_h_local, Db_h_local, smemSize>>>(k, compare_device, datapoints_device, local_knns_device);
 
   // Initialize the grid and block dimensions and calculate the global k nearest neighbors
-  int num_query_points = 1;
-  int Db_h_global = num_query_points;
-  int Dg_h_global = (datapoints->num_points + Db_h_global - 1) / Db_h_global;
-  calculate_global_knn<<<Dg_h_global, Db_h_global>>>(k, local_knns_device, global_knn_device, Dg_h_local, num_query_points);
+  const int num_query_points = 1;
+  const int Db_h_global = 128;
+  const int Dg_h_global = (datapoints->num_points + Db_h_global - 1) / Db_h_global;
+  int* block_offsets;
+  cudaMalloc(&block_offsets, num_query_points * Dg_h_local * sizeof(int));
+  calculate_global_knn<<<Dg_h_global, Db_h_global>>>(k, local_knns_device, global_knn_device, Dg_h_local, num_query_points, block_offsets);
+  cudaDeviceSynchronize();
+
+  //create an array the length of k to put all of the compared points in
+  //compare.neighbour = (Point_Neighbour_Relationship*) malloc(k * sizeof(Point_Neighbour_Relationship));
 
   //Copy the GPU memory back to the CPU
-  cudaMemcpy(compare.neighbour, global_knn_device, k * sizeof(Point_Neighbour_Relationship), cudaMemcpyDeviceToHost);
+  //cudaMemcpy(compare.neighbour, global_knn_device, k * sizeof(Point_Neighbour_Relationship), cudaMemcpyDeviceToHost);
+
+  // TODO: Copy Array of points back to CPU
+  //cudaMemcpy(..., cudaMemcpyDeviceToHost);
 
   //Now find the most frequently occurring neighbour pointer type
   //first get all the neighbour pointer categories and put them into a neighbour list
   int neighbour_categories[k];
-
-  //create an array the length of k to put all of the compared points in
-  compare.neighbour = (Point_Neighbour_Relationship*) malloc(k * sizeof(Point_Neighbour_Relationship));
 
   for (int c = 0; c < k; c++) {
     neighbour_categories[c] = compare.neighbour[c].neighbour_pointer->category;
@@ -358,6 +373,9 @@ int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
   printf("[DEBUG] k is :%d\n", k);
   #endif
 
+  // ALTERNATIVE:
+  int category = mode(neighbour_categories, k);
+
   //Free the GPU memory
   cudaFree(compare_device);
   cudaFree(compare_point_device);
@@ -371,7 +389,7 @@ int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
 
   //Find the mode of the categories
   //Call fuction with array of int and the length of the array and return the result
-  return mode(neighbour_categories, k);
+  return category;
 }
 
 
@@ -395,7 +413,7 @@ Point read_point_user(int num_dimensions, int num_categories) {
 
 //Passing by reference is less safe, but as a result of the performance increase
 //it is justified
-void print_point(Point *point_arg, int dimensions) {
+__host__ __device__ void print_point(Point *point_arg, int dimensions) {
   printf("(");
   int i = 0;
   do {
@@ -437,7 +455,7 @@ Dataset read_dataset_user(int num_categories) {
 }
 
 //Large dataset shouldn't be copied to support large datasets
-void print_dataset(Dataset *dataset_arg) {
+__host__ __device__ void print_dataset(Dataset *dataset_arg) {
   printf("Dataset\nDimensionality: %d\nNumber of Points: %d\n", dataset_arg->dimensionality, dataset_arg->num_points);
   for (int i = 0; i < dataset_arg->num_points; i++) {
     print_point(dataset_arg->points + i, dataset_arg->dimensionality);
