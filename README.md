@@ -21,3 +21,6 @@ After starting the program, you are asked to specify the dataset (e.g. `datasets
 The mode can be defined by setting either `#define EVALUATE 0` or `#define EVALUATE 1` in `knn.c`.
 1) User mode (`#define EVALUATE 0`): User can specify a query point and the parameter k. The program then classifies this point.
 2) Evaluation mode (`#define EVALUATE 1`): Determine the accuracy of the knn model using leave-one-out-cross validation (LOOCV). LOOCV is performed for all odd $k$ between 1 and the number of points in the dataset.
+
+## Input CSV files
+The datasets must be stored as CSV files. They must not have a header. The last column must contain the class of each sample. All other columns must only contain numerical data. The last row of the CSV file must be empty, i.e. if the CSV file contains 99 datapoints, the total amount of rows must be 100.

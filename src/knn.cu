@@ -9,14 +9,15 @@
 #include "greatest.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE 1 // Choose between evaluation mode (1) and user mode (0)
-#define CUDA 1 // Choose between parallel/CUDA mode (1) and sequential mode (0)
+#define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
+#define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
+#define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
+
+#define TPB_LOCAL_KNN 32   // Threads per block for calculating the local k nearest neighbors
+#define TPB_GLOBAL_KNN 32  // Threads per block for calculating the global k nearest neighbors and determining the class
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
-
-//Define the debug level. Outputs verbose output if enabled.
-// #define DEBUG
 
 //Datatype allows classifications to be stored very efficiently
 //Is an array of char *, which is a double char *
@@ -97,7 +98,7 @@ int mode(int *values, int num_values) {
   int max_index = 0;
   //Count the number of each number
   qsort(values, num_values, sizeof(int), compare_int);
-  #ifdef DEBUG
+  #if DEBUG
   printf("[DEBUG] Values[%d]: %d\n", 0, values[0]);
   #endif
   for (int i = 1; i < num_values; i++) {
@@ -112,7 +113,7 @@ int mode(int *values, int num_values) {
 
       //update the max_index
       max_index = i - 1;
-      #ifdef DEBUG
+      #if DEBUG
       printf("[DEBUG] Max index updated to %d\n", i - 1);
       #endif
 
@@ -127,13 +128,13 @@ int mode(int *values, int num_values) {
 
       //update the max_index
       max_index = i;
-      #ifdef DEBUG
+      #if DEBUG
       printf("[DEBUG] Max index updated to %d\n", i - 1);
       #endif
     }
 
     //Keep a reference to an instance of the highest counted number in the array
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] Values[%d]: %d\n", i, values[i]);
     #endif
   }
@@ -148,8 +149,12 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
     printf("[WARN] Warning: %d is even. Tie cases have undefined behviour\n", k);
   }
 
+  #if DEBUG
+  printf("[DEBUG] k: %d\n", k);
+  #endif
+
   //create an array the length of k to put all of the compared points in
-  compare.neighbour = (Point_Neighbour_Relationship*)malloc(k*sizeof(Point_Neighbour_Relationship));
+  compare.neighbour = (Point_Neighbour_Relationship*) malloc(k*sizeof(Point_Neighbour_Relationship));
   //For the first k points, just add whatever junk into the array. This way we can just update the largest.
   for (int i = 0; i < k; i++) {
     float distance = point_distance(compare, datapoints->points[i], datapoints->dimensionality);
@@ -161,7 +166,7 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
   for (int i = k; i < datapoints->num_points; i++) {
     float distance = point_distance(compare, datapoints->points[i], datapoints->dimensionality);
 
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] Point distance: %lf\n", distance);
     #endif
 
@@ -174,18 +179,18 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
         max = compare.neighbour[j].distance;
         update_index = j;
       }
-      #ifdef DEBUG
+      #if DEBUG
       printf("[DEBUG] Distance[%d]: %lf\n", j, compare.neighbour[j].distance);
       #endif
     }
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] update_index max distance identified to be: %d at distance: %lf\n", update_index, compare.neighbour[update_index].distance);
     #endif
 
     //if the current point distance is less than the largest recorded distance, or if the distances haven't been set
     if (compare.neighbour[update_index].distance > distance) {
       //Update the distance at update_index
-      #ifdef DEBUG
+      #if DEBUG
       //printf("[DEBUG] Neighbour number: %d is either null or distance is shorter, updating pointer\n", i);
       printf("[DEBUG] Compare neighbour[%d] = %lf\n", update_index, distance);
       #endif
@@ -194,12 +199,12 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
       //compare.neighbour[i].neighbour_pointer = &datapoints->points[i];
       compare.neighbour[update_index].neighbour_pointer = datapoints->points+i;
 
-      #ifdef DEBUG
+      #if DEBUG
       printf("[DEBUG] category of new point: %d\n", datapoints->points[i].category);
       #endif
     }
-    #ifdef DEBUG
-    printf("==========================================\n");
+    #if DEBUG
+    printf("============================================\n");
     #endif
   }
   //Now find the most frequently occurring neighbour pointer type
@@ -209,210 +214,159 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
   for (int c = 0; c < k; c++) {
     neighbour_categories[c] = compare.neighbour[c].neighbour_pointer->category;
 
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] compare.neighbour[%d].distance: %lf\n", c, compare.neighbour[c].distance);
     printf("[DEBUG] Category[%d]: %d\n", c, neighbour_categories[c]);
     #endif
   }
 
-  #ifdef DEBUG
-  printf("[DEBUG] k is :%d\n", k);
-  #endif
+  //Free memory
+  free(compare.neighbour);
 
   //Find the mode of the categories
   //Call fuction with array of int and the length of the array and return the result
   return mode(neighbour_categories, k);
 }
 
-
+// Calculate the local k nearest neighbors of a query point (= compare) given the dataset.
+// The result is stored in the array local_knns. The array local_knns must have the size (k * <number of thread blocks>).
+// Local k nearest neighbors means that for every thread block you consider a subset of the dataset and then you calculate
+// for every thread block the k nearest neighbors in this subset.
 __global__ void calculate_local_knns(const int k, Comparison_Point* compare, Dataset* datapoints, Point_Neighbour_Relationship* local_knns) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= datapoints->num_points) return;
+  bool valid_datapoint = true;
+  if (idx >= datapoints->num_points) {
+    valid_datapoint = false;
+  }
 
-  extern __shared__ float s_distances[]; // smemSize = blockDim.x * sizeof(float)
+  extern __shared__ float s_distances[]; // smem_size = blockDim.x * sizeof(float)
 
-  // Calculate distances
-  float distance = point_distance(*compare, datapoints->points[idx], datapoints->dimensionality);
+  // Calculate distances (valid points have the actual distance, invalid points have the max. possible distance)
+  float distance = FLT_MAX;
+  if (valid_datapoint) {
+    distance = point_distance(*compare, datapoints->points[idx], datapoints->dimensionality);
+  }
+  
   s_distances[threadIdx.x] = distance;
   __syncthreads();
 
-  // Determine local k-nearest neighbors
+  // Determine the local k nearest neighbors
+  // If rank_distance=3, it means that the corresponding point is the 4th closest datapoint to the
+  // query point of all datapoints considered in this thread block.
   int rank_distance = 0;
-  for (int i = 0; i < blockDim.x; ++i) { // TODO: What to do if 2 samples have the same distance?
-    if (distance > s_distances[i]) { 
+  for (int i = 0; i < blockDim.x; ++i) {
+    if (distance > s_distances[i]) {
+        ++rank_distance;
+    } else if ((distance == s_distances[i]) && (threadIdx.x > i)) {
+        // Handle the case when 2 samples have the same distance
+        // -> Only for one of the samples the rank should be increased
+        // -> Here: Only increase the rank of the sample with the higher index should be increased
         ++rank_distance;
     }
   }
 
-  if (rank_distance < k) { // TODO: What if k > blockDim.x?
-    for (int i = 0; i < k; ++i) {
-        local_knns[i * blockIdx.x + rank_distance].neighbour_pointer = &(datapoints->points[idx]);
-        local_knns[i * blockIdx.x + rank_distance].distance = distance;
-    }
+  #if DEBUG
+  printf("[DEBUG] Point ID (idx) = %d \t rank_distance = %d \t\t distance = %f\n", idx, rank_distance, distance);
+  #endif
+
+  // Check if the calculated distance in this thread belongs to the local k nearest neighbors and if yes,
+  // add the corresponding point to the array storing the local k nearest neighbors
+  if (rank_distance < k) {
+    Point_Neighbour_Relationship* local_nearest_neighbor = &(local_knns[k * blockIdx.x + rank_distance]);
+    local_nearest_neighbor->neighbour_pointer = &(datapoints->points[idx]);
+    local_nearest_neighbor->distance = distance;
+    #if DEBUG
+    printf("[DEBUG] local_knns[%d].distance = %f \t Point ID (idx) = %d \t Category: %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, idx, local_nearest_neighbor->neighbour_pointer->category);
+    #endif
   }
 }
 
-
-__global__ void calculate_global_knn(const int k, Point_Neighbour_Relationship* local_knns, Point_Neighbour_Relationship* global_knn, const int num_local_knn, const int num_query_points, int* block_offsets) {
+// Calculate the global k nearest neighbors of a query point given its local k nearest neighbors.
+// The result is stored in the variable query_classes. The array block_offsets is required within the function
+// and its size must be equivalent to the number of local k nearest neighbors (= num_local_knn) multplied with
+// the number of query points (= num_query_points).
+__global__ void calculate_global_knn(const int k, Point_Neighbour_Relationship* local_knns, Point_Neighbour_Relationship* global_knn,
+                                     const int num_local_knn, const int num_query_points, int* block_offsets) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_query_points) return;
 
-  // TODO - Idea to improve this kernel: Always only compare two local knns and do that in parallel and iteratively until only one knn vector is left which are then the gloabl knn
+  // TODO - Idea to improve this kernel: Always only compare two local knns and do that in parallel and iteratively until
+  // only one knn vector is left which are then the global knn
 
-  // find the global k-nearest neighbors of from all the local k-nearest neighbors
-  //int block_offsets[num_local_knn] = {0}; // initialize to zero; does not work because num_local_knn has to be a constant
+  // Set all elements in block_offsets to zero
   for (int j = 0; j < num_local_knn; ++j) {
     block_offsets[idx * num_local_knn + j] = 0;
   }
 
+  // Find the global k nearest neighbors of from all the local k nearest neighbors
+  // local_knns stores all local k nearest neighbors sequentially, e.g. from index 0 to k-1 you have
+  // the local k nearest neighbors of thread block 0, from index k to 2k-1 you have the local k nearest
+  // neighbors of thread block 1, and so on. The local k nearest neighbors are sorted in ascending order,
+  // e.g. index 0 stores the nearest neighbor of thread block 0.
+  // Hence, to determine the global nearest neighbor we only have to check the first element of all
+  // k nearest neighbors. Then, if we want to determine the (global) second nearest neighbor we have to do
+  // the same but we have to consider that we have already used the first element of one of the local k
+  // nearest neighbors. This is done by adding an individual offset value to every local k nearest
+  // neighbors subarray. These offset values are stored in 'block_offsets'.
+  // TODO: Handle the case when k is larger than a single array of local nearest neighbors because block size for distance calculations was too small
+  // TODO: What if k > TPB_LOCAL_KNN?
   for (int i = 0; i < k; ++i) {
     float min_distance = FLT_MAX; // initialize to max value
-    int min_block_id;
+    int min_dist_block_id;
     for (int j = 0; j < num_local_knn; ++j) {
-      float min_dist_block = local_knns[j * k + block_offsets[idx * num_local_knn + j]].distance;
+      float min_dist_block = local_knns[j * k + block_offsets[idx * num_local_knn + j]].distance; // minimum unused distance of local knn subarray
       if (min_dist_block < min_distance) {
         min_distance = min_dist_block;
-        min_block_id = j;
+        min_dist_block_id = j;
       }
     }
-    global_knn[i] = local_knns[min_block_id * k + block_offsets[idx * num_local_knn + min_block_id]];
-    block_offsets[idx * num_local_knn + min_block_id] += 1;       
-  }
-}
 
-__host__ __device__ void print_dataset(Dataset *dataset_arg); // TODO: Ugly
-
-__global__ void print_dataset_parallel(Dataset *dataset_arg) {
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= 1) return;
-
-  print_dataset(dataset_arg);
-}
-
-//Doing a k nearest neighbour search
-int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
-  //Warn if k is even
-  if (k % 2 == 0) {
-    printf("[WARN] Warning: %d is even. Tie cases have undefined behviour\n", k);
-  }
-
-  //Declare GPU pointers
-  Comparison_Point* compare_device;
-  float* compare_point_device;
-  Dataset* datapoints_device;
-  Point* datapoints_points_device;
-  float* point_dimensions_device[datapoints->num_points]; // array of pointers for storing the dimensions (x-, y-, ... values) of the points in the dataset
-  Point_Neighbour_Relationship* local_knns_device;
-  Point_Neighbour_Relationship* global_knn_device;
-
-
-  //Allocate GPU memory
-  cudaMalloc(&compare_device, sizeof(Comparison_Point));
-  cudaMalloc(&compare_point_device, datapoints->dimensionality * sizeof(float));
-  cudaMalloc(&datapoints_device, sizeof(Dataset));
-  cudaMalloc(&datapoints_points_device, datapoints->num_points * sizeof(Point));
-  for (int i = 0; i < datapoints->num_points; ++i) {
-    cudaMalloc(&point_dimensions_device[i], datapoints->dimensionality * sizeof(float));
-  }
-  cudaMalloc(&global_knn_device, k * sizeof(Point_Neighbour_Relationship));
-
-  //Copy memory to the GPU
-  cudaMemcpy(compare_device, &compare, sizeof(Comparison_Point), cudaMemcpyHostToDevice);
-  cudaMemcpy(compare_point_device, compare.dimension, datapoints->dimensionality * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(&(compare_device->dimension), &compare_point_device, sizeof(float*), cudaMemcpyHostToDevice); // bind pointer to struct
-  cudaMemcpy(datapoints_device, datapoints, sizeof(Dataset), cudaMemcpyHostToDevice);
-  cudaMemcpy(datapoints_points_device, datapoints->points, datapoints->num_points * sizeof(Point), cudaMemcpyHostToDevice);
-  cudaMemcpy(&(datapoints_device->points), &datapoints_points_device, sizeof(Point*), cudaMemcpyHostToDevice); // bind pointer to struct
-
-  for (int i = 0; i < datapoints->num_points; ++i) {
-    cudaMemcpy(point_dimensions_device[i], datapoints->points[i].dimension, datapoints->dimensionality * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(&(datapoints_points_device[i].dimension), &point_dimensions_device[i], sizeof(float*), cudaMemcpyHostToDevice); // bind pointer to struct
-  }
-
-  //print_dataset_parallel<<<1, 32>>>(datapoints_device);
-
-  // Initialize the grid and block dimensions and calculate the local k nearest neighbors (k nearest neighbors for every block)
-  const int Db_h_local = 64;
-  const int Dg_h_local = (datapoints->num_points + Db_h_local - 1) / Db_h_local;
-  cudaMalloc(&local_knns_device, k * Dg_h_local * sizeof(Point_Neighbour_Relationship));
-  const int smemSize = Db_h_local * sizeof(float);
-  calculate_local_knns<<<Dg_h_local, Db_h_local, smemSize>>>(k, compare_device, datapoints_device, local_knns_device);
-
-  // Initialize the grid and block dimensions and calculate the global k nearest neighbors
-  const int num_query_points = 1;
-  const int Db_h_global = 128;
-  const int Dg_h_global = (datapoints->num_points + Db_h_global - 1) / Db_h_global;
-  int* block_offsets;
-  cudaMalloc(&block_offsets, num_query_points * Dg_h_local * sizeof(int));
-  calculate_global_knn<<<Dg_h_global, Db_h_global>>>(k, local_knns_device, global_knn_device, Dg_h_local, num_query_points, block_offsets);
-  cudaDeviceSynchronize();
-
-  //create an array the length of k to put all of the compared points in
-  //compare.neighbour = (Point_Neighbour_Relationship*) malloc(k * sizeof(Point_Neighbour_Relationship));
-
-  //Copy the GPU memory back to the CPU
-  //cudaMemcpy(compare.neighbour, global_knn_device, k * sizeof(Point_Neighbour_Relationship), cudaMemcpyDeviceToHost);
-
-  // TODO: Copy Array of points back to CPU
-  //cudaMemcpy(..., cudaMemcpyDeviceToHost);
-
-  //Now find the most frequently occurring neighbour pointer type
-  //first get all the neighbour pointer categories and put them into a neighbour list
-  int neighbour_categories[k];
-
-  for (int c = 0; c < k; c++) {
-    neighbour_categories[c] = compare.neighbour[c].neighbour_pointer->category;
-
-    #ifdef DEBUG
-    printf("[DEBUG] compare.neighbour[%d].distance: %lf\n", c, compare.neighbour[c].distance);
-    printf("[DEBUG] Category[%d]: %d\n", c, neighbour_categories[c]);
+    int index_local = min_dist_block_id * k + block_offsets[idx * num_local_knn + min_dist_block_id];
+    global_knn[i] = local_knns[index_local];
+    block_offsets[idx * num_local_knn + min_dist_block_id] += 1;
+    #if DEBUG
+    printf("[DEBUG] global_knn[%d].distance = %f \t index_local = %d \t category: %d\n", i, global_knn[i].distance, index_local, global_knn[i].neighbour_pointer->category);
     #endif
   }
-
-  #ifdef DEBUG
-  printf("[DEBUG] k is :%d\n", k);
-  #endif
-
-  // ALTERNATIVE:
-  int category = mode(neighbour_categories, k);
-
-  //Free the GPU memory
-  cudaFree(compare_device);
-  cudaFree(compare_point_device);
-  cudaFree(datapoints_device);
-  cudaFree(datapoints_points_device);
-  cudaFree(local_knns_device);
-  cudaFree(global_knn_device);
-
-  //Free the CPU memory
-  free(compare.neighbour);
-
-  //Find the mode of the categories
-  //Call fuction with array of int and the length of the array and return the result
-  return category;
 }
 
-
-//Function that takes in a classification integer, and returns a classification string
-//Requires a map between the integers and the string in the form of a classification_map datatype
-my_string classify(Classifier_List category_map, int category) {
-  my_string class_string = category_map.categories[category];
-  return class_string;
-}
-
-Point read_point_user(int num_dimensions, int num_categories) {
-  Point user_point;
-  user_point.dimension = (float*)malloc(num_dimensions*sizeof(float));
-  for (int i = 0; i < num_dimensions; i++) {
-    printf("%dth dimension: ", i);
-    user_point.dimension[i] = read_float("");
+// Find the most frequent element in a C array (https://www.geeksforgeeks.org/frequent-element-array/)
+__host__ __device__ int most_frequent(int* arr, const int n) {
+  int maxcount = 0;
+  int element_having_max_freq;
+  for (int i = 0; i < n; ++i) {
+    int count = 0;
+    for (int j = 0; j < n; ++j) {
+      if (arr[i] == arr[j]) {
+        ++count;
+      }
+    }
+    if (count > maxcount) {
+      maxcount = count;
+      element_having_max_freq = arr[i];
+    }
   }
-  user_point.category = read_integer_range("Enter a category ID: ", 0, num_categories - 1);
-  return user_point;
+  return element_having_max_freq;
 }
 
-//Passing by reference is less safe, but as a result of the performance increase
-//it is justified
+// Determine the class of a query point given its global k nearest neighbors. The result is stored in the variable query_classes.
+__global__ void determine_class(const int k, Point_Neighbour_Relationship* global_knn, const int num_query_points, int* query_classes) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_query_points) return;
+
+  extern __shared__ int s_neighbour_categories[]; // size: k * blockDim.x * 4 byte (TODO: be careful because max. size of shared memory is 48KB)
+
+  for (int i = 0; i < k; ++i) {
+    s_neighbour_categories[idx * k + i] = global_knn[i].neighbour_pointer->category;
+  }
+
+  query_classes[idx] = most_frequent(s_neighbour_categories + idx * k, k);
+  #if DEBUG
+  printf("[DEBUG] Determined class: %d\n", query_classes[idx]);
+  #endif
+}
+
+//Passing by reference is less safe, but as a result of the performance increase it is justified
 __host__ __device__ void print_point(Point *point_arg, int dimensions) {
   printf("(");
   int i = 0;
@@ -426,34 +380,6 @@ __host__ __device__ void print_point(Point *point_arg, int dimensions) {
   printf(") %d\n", point_arg->category);
 }
 
-//Read in a dataset given the number of categories
-Dataset read_dataset_user(int num_categories) {
-  //Note only good for small datasets. If items are being added for a huge number
-  //this operation would get very expensive. Implemention of a linked list would
-  //potentially be beneficial for this calculation
-  Dataset user_dataset;
-
-  user_dataset.dimensionality = read_integer("Enter the number of dimensions of your classification data: ");
-
-  //Number of points (dynamically updated for UX)
-  user_dataset.num_points = 1;
-  user_dataset.points = (Point*)malloc(sizeof(Point));
-
-  bool enter_another = true;
-  do {
-    user_dataset.points[user_dataset.num_points - 1] = read_point_user(user_dataset.dimensionality, num_categories);
-    enter_another = read_boolean("Enter another? [y/n] ");
-    if (enter_another) {
-      user_dataset.num_points += 1;
-      user_dataset.points = (Point*)realloc(user_dataset.points, user_dataset.num_points*sizeof(Point));
-    } else {
-      break;
-    }
-  } while(enter_another);
-
-  return user_dataset;
-}
-
 //Large dataset shouldn't be copied to support large datasets
 __host__ __device__ void print_dataset(Dataset *dataset_arg) {
   printf("Dataset\nDimensionality: %d\nNumber of Points: %d\n", dataset_arg->dimensionality, dataset_arg->num_points);
@@ -462,37 +388,123 @@ __host__ __device__ void print_dataset(Dataset *dataset_arg) {
   }
 }
 
-Classifier_List read_classes_user() {
-  //In future, read string and similar calls could be mocked to allow unit testing
-  //Since the framework already exists for terminal_user input, this could be expanded
-  Classifier_List classes;
-  classes.categories = (my_string*)malloc(sizeof(my_string));
-  classes.num_categories = 1;
-
-  bool enter_another = true;
-  do {
-    classes.categories[classes.num_categories - 1] = read_string("Category name: ");
-    enter_another = read_boolean("Enter another? [y/n] ");
-    if (enter_another) {
-      classes.num_categories += 1;
-      classes.categories = (my_string*)realloc(classes.categories, classes.num_categories*sizeof(my_string));
-    } else {
-      break;
-    }
-  } while(enter_another);
-
-  return classes;
-}
-
 void print_classes(Classifier_List classes) {
   for (int i = 0; i < classes.num_categories; i++) {
     printf("Categories: %s\n", classes.categories[i].str);
   }
 }
 
+// Print the dataset stored in GPU memory from within a global function
+__global__ void print_dataset_parallel(Dataset *dataset_arg) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= 1) return;
+
+  print_dataset(dataset_arg);
+}
+
+// Doing a k nearest neighbour search using the GPU
+int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
+  // Warn if k is even
+  if (k % 2 == 0) {
+    printf("[WARN] Warning: %d is even. Tie cases have undefined behviour\n", k);
+  }
+
+  #if DEBUG
+  printf("[DEBUG] k: %d\n", k);
+  #endif
+
+  // TODO: Change code so that multiple queries can be ahndled at once
+  const int num_query_points = 1;
+
+  // Declare GPU pointers
+  int* query_classes_host; // storing the result (determined classes)
+  Comparison_Point* compare_device;
+  Dataset* datapoints_device;
+  Point_Neighbour_Relationship* local_knns_device;
+  Point_Neighbour_Relationship* global_knn_device;
+
+  // GPU pointers required for deep copying the compare and datapoints variables
+  float* compare_point_device;
+  Point* datapoints_points_device;
+  float* point_dimensions_device[datapoints->num_points]; // array of pointers for storing the dimensions (x-, y-, ... values) of the points in the dataset
+
+  // GPU pointers required as helper variables
+  int* query_classes_device;
+  int* block_offsets;
+
+  // Allocate CPU memory
+  query_classes_host = (int*) malloc(num_query_points * sizeof(int));
+
+  // Allocate GPU memory
+  cudaMalloc(&compare_device, sizeof(Comparison_Point));
+  cudaMalloc(&compare_point_device, datapoints->dimensionality * sizeof(float));
+  cudaMalloc(&datapoints_device, sizeof(Dataset));
+  cudaMalloc(&datapoints_points_device, datapoints->num_points * sizeof(Point));
+  for (int i = 0; i < datapoints->num_points; ++i) {
+    cudaMalloc(&point_dimensions_device[i], datapoints->dimensionality * sizeof(float));
+  }
+  cudaMalloc(&global_knn_device, k * sizeof(Point_Neighbour_Relationship));
+  cudaMalloc(&query_classes_device, num_query_points * sizeof(int));
+
+  // Copy memory to the GPU
+  cudaMemcpy(compare_device, &compare, sizeof(Comparison_Point), cudaMemcpyHostToDevice);
+  cudaMemcpy(compare_point_device, compare.dimension, datapoints->dimensionality * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(&(compare_device->dimension), &compare_point_device, sizeof(float*), cudaMemcpyHostToDevice); // bind pointer to struct
+  cudaMemcpy(datapoints_device, datapoints, sizeof(Dataset), cudaMemcpyHostToDevice);
+  cudaMemcpy(datapoints_points_device, datapoints->points, datapoints->num_points * sizeof(Point), cudaMemcpyHostToDevice);
+  cudaMemcpy(&(datapoints_device->points), &datapoints_points_device, sizeof(Point*), cudaMemcpyHostToDevice); // bind pointer to struct
+  for (int i = 0; i < datapoints->num_points; ++i) {
+    cudaMemcpy(point_dimensions_device[i], datapoints->points[i].dimension, datapoints->dimensionality * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(&(datapoints_points_device[i].dimension), &point_dimensions_device[i], sizeof(float*), cudaMemcpyHostToDevice); // bind pointer to struct
+  }
+
+  #if DEBUG
+  printf("[DEBUG] Dataset used for knn search:\n");
+  print_dataset_parallel<<<1, 32>>>(datapoints_device);
+  #endif
+
+  // Initialize the grid and block dimensions and calculate the local k nearest neighbors (k nearest neighbors for every thread block)
+  const int num_blocks_local_knn = (datapoints->num_points + TPB_LOCAL_KNN - 1) / TPB_LOCAL_KNN;
+  int smem_size = TPB_LOCAL_KNN * sizeof(float);
+  cudaMalloc(&local_knns_device, k * num_blocks_local_knn * sizeof(Point_Neighbour_Relationship));
+  calculate_local_knns<<<num_blocks_local_knn, TPB_LOCAL_KNN, smem_size>>>(k, compare_device, datapoints_device, local_knns_device);
+  cudaDeviceSynchronize();
+
+  // Initialize the grid and block dimensions and calculate the global k nearest neighbors
+  cudaMalloc(&block_offsets, num_query_points * num_blocks_local_knn * sizeof(int));
+  const int num_blocks_global_knn = (num_query_points + TPB_GLOBAL_KNN - 1) / TPB_GLOBAL_KNN;
+  calculate_global_knn<<<num_blocks_global_knn, TPB_GLOBAL_KNN>>>(k, local_knns_device, global_knn_device, num_blocks_local_knn, num_query_points, block_offsets);
+  cudaDeviceSynchronize();
+
+  // Determine the category of the query sample by determining the majority class of the k nearest neighbors
+  smem_size = k * TPB_GLOBAL_KNN * sizeof(int);
+  determine_class<<<num_blocks_global_knn, TPB_GLOBAL_KNN, smem_size>>>(k, global_knn_device, num_query_points, query_classes_device);
+
+  // Copy the GPU memory back to the CPU
+  cudaMemcpy(query_classes_host, query_classes_device, num_query_points * sizeof(int), cudaMemcpyDeviceToHost);
+
+  // Free the GPU memory
+  cudaFree(compare_device);
+  cudaFree(compare_point_device);
+  cudaFree(datapoints_device);
+  cudaFree(datapoints_points_device);
+  cudaFree(local_knns_device);
+  cudaFree(global_knn_device);
+  cudaFree(query_classes_device);
+
+  return query_classes_host[0]; // TODO: query_classes_host needs to be freed
+}
+
+//Function that takes in a classification integer, and returns a classification string
+//Requires a map between the integers and the string in the form of a classification_map datatype
+my_string classify(Classifier_List category_map, int category) {
+  my_string class_string = category_map.categories[category];
+  return class_string;
+}
+
 Comparison_Point read_comparison_point_user(int num_dimensions) {
   Comparison_Point user_point;
-  user_point.dimension = (float*)malloc(num_dimensions*sizeof(float));
+  user_point.dimension = (float*) malloc(num_dimensions*sizeof(float));
   for (int i = 0; i < num_dimensions; i++) {
     printf("%dth dimension: ", i);
     user_point.dimension[i] = read_float("");
@@ -512,7 +524,7 @@ int count_fields(char *buffer) {
     }
     pos++;
   } while(current != '\n' && current != '\0');
-  #ifdef DEBUG
+  #if DEBUG
   printf("[DEBUG] Number of fields: %d\n", count);
   #endif
   return count;
@@ -522,7 +534,7 @@ int get_class_num(my_string in_string, Classifier_List *class_list) {
   //Check to see if any of the strings are present in the classifier list
   //Could improve with a Levenshtein Distance calculation to account for human errors
   //Also, if i is zero, we won't even need to check ifit's in there, we know it's not
-  #ifdef DEBUG
+  #if DEBUG
   printf("[DEBUG] class_list->num_categories: %d\n", class_list->num_categories);
   #endif
 
@@ -534,7 +546,7 @@ int get_class_num(my_string in_string, Classifier_List *class_list) {
   //If it isn't present in the existing array, we need to add it in.
   //Increment the count of categories
   class_list->num_categories++;
-  #ifdef DEBUG
+  #if DEBUG
   printf("[DEBUG] Class list categories: %d\n", class_list->num_categories);
   #endif
   class_list->categories = (my_string*) realloc(class_list->categories, sizeof(my_string) * class_list->num_categories);
@@ -558,12 +570,12 @@ my_string extract_field(my_string line, int field) {
   //Call strtok "field" times
   //Return that value of the token
   for (int i = 1; i < field; i++) {
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] Token is:  %s\n", token);
     #endif
 
     token = strtok(NULL, " ,");
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] Before copy in loop\n");
     #endif
   }
@@ -582,11 +594,12 @@ int count_lines(my_string filename) {
   char buffer[1024];
   int count = 0;
   while(fgets(buffer, 1024, file)) {
+    // True if line is non-empty (only \n means also non-empty)
     count++;
   }
   fclose(file);
-  #ifdef DEBUG
-  printf("[DEBUG] Line number is:  %d\n", count);
+  #if DEBUG
+  printf("[DEBUG] Number of lines in input file: %d\n", count);
   #endif
   return count;
 }
@@ -601,7 +614,7 @@ Dataset new_dataset() {
 //parse point
 //TODO ADD UNIT TESTS!!!
 Point parse_point(my_string line, int num_dimensions, Classifier_List *class_list) {
-  float *dimensions = (float*)malloc(num_dimensions*sizeof(float));
+  float *dimensions = (float*) malloc(num_dimensions*sizeof(float));
   for (int i = 0; i < num_dimensions; i++) {
     //Go through and pull out the first num fields, and construct a point out of them
     // pass the string into a function that just mocks out and returns 1
@@ -614,7 +627,7 @@ Point parse_point(my_string line, int num_dimensions, Classifier_List *class_lis
 
   //Since the data for the class is one after the
   curr_point.category = get_class_num(extract_field(line, num_dimensions + 1), class_list);
-  #ifdef DEBUG
+  #if DEBUG
   print_point(&curr_point, num_dimensions);
   #endif
   return curr_point;
@@ -633,7 +646,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
 
   //Struct should contain a 2d array with the lines, in each with data separated into array elements
   char *buffer;
-  buffer = (char*)malloc(sizeof(char) * 1024);
+  buffer = (char*) malloc(sizeof(char) * 1024);
   fscanf(file, "%s\n", buffer);
 
   //Count the commas
@@ -641,9 +654,8 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
 
   //create a Dataset which can hold the rest of the data
   //dimensionality is the number of fields -1
-  //number of points is the number of lines -1, assuming the last line is a blank line
-  Point *points = (Point*)malloc((num_lines-1)*sizeof(Point));
-  Dataset return_dataset = {num_dimensions, num_lines - 1, points};
+  Point *points = (Point*) malloc(num_lines*sizeof(Point));
+  Dataset return_dataset = {num_dimensions, num_lines, points};
 
   my_string buffer_string;
   strcpy(buffer_string.str, buffer);
@@ -655,11 +667,11 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
 
     i++;
     //Don't do this on the last iteration of the loop
-    if (!(i == num_lines - 1)) {
+    if (!(i == num_lines)) {
       fscanf(file, "%s\n", buffer);
       strcpy(buffer_string.str, buffer);
     }
-  } while (i < num_lines - 1);
+  } while (i < num_lines);
 
   // Now we can essentially read in the first "count" fields and cast to float
   // Read in the last field, IE count and add a class for the
@@ -678,20 +690,26 @@ Classifier_List new_classifier_list() {
 //Takes k as a parameter and also a dataset
 //Measure the accuracy of the knn given a dataset, using the remove one method
 float evaluate_knn(int k, Dataset *benchmark_dataset) {
+  #if DEBUG
+  printf("============================================\n");
+  printf("[DEBUG] Complete dataset:\n");
+  print_dataset(benchmark_dataset);
+  #endif
 
   float accuracy;
   Dataset comparison_dataset = new_dataset();
   comparison_dataset.dimensionality = benchmark_dataset->dimensionality;
   comparison_dataset.num_points = benchmark_dataset->num_points - 1;
 
-  comparison_dataset.points = (Point*)malloc(comparison_dataset.num_points*sizeof(Point));
+  comparison_dataset.points = (Point*) malloc(comparison_dataset.num_points*sizeof(Point));
 
   int sum_correct = 0;
   // Make a copy of the dataset, except missing the i'th term.
   for (int i = 0; i < benchmark_dataset->num_points; i++) {
     //Loop through the dataset the number of times there are points
-    #ifdef DEBUG
-    printf("i:%d\n", i);
+    #if DEBUG
+    printf("============================================\n");
+    printf("[DEBUG] i: %d\n", i);
     #endif
     for (int j = 0; j < comparison_dataset.num_points; j++) {
       //Don't copy the ith term
@@ -702,15 +720,15 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
       } else {
         index = j;
       }
-      #ifdef DEBUG
-      printf("Index: %d\n", index);
+      #if DEBUG
+      printf("[DEBUG] Index: %d\n", index);
       #endif
       comparison_dataset.points[j] = benchmark_dataset->points[index];
     }
     //Create a comparison point out of that i'th term
     Comparison_Point compare = {benchmark_dataset->points[i].dimension, NULL};
-    #ifdef DEBUG
-    printf("Gets to the knn search\n");
+    #if DEBUG
+    printf("[DEBUG] Gets to the knn search\n");
     #endif
     //if the classification matches the category, add it to a sum
     #if CUDA
@@ -720,16 +738,14 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
     #else
     if (knn_search(k, compare, &comparison_dataset) == benchmark_dataset->points[i].category) {
       sum_correct++;
+    }
     #endif
-
-
   }
-  accuracy = (float)sum_correct / (float)benchmark_dataset->num_points;
 
-  //Print out the percent accuracy for that value of k
-  #ifdef DEBUG
-  printf("Accuracy is %lf percent", accuracy * 100);
-  #endif
+  accuracy = (float) sum_correct / (float) benchmark_dataset->num_points;
+
+  //Free CPU memory
+  free(comparison_dataset.points);
 
   return accuracy;
 }
@@ -774,7 +790,7 @@ int main (int argc, char **argv) {
     free(compare.dimension);
     compare.dimension = NULL;
 
-    #ifdef DEBUG
+    #if DEBUG
     printf("[DEBUG] Category is: %d\n", category);
     #endif
 
@@ -786,8 +802,19 @@ int main (int argc, char **argv) {
   #if EVALUATE
   for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
     printf("k: %d, accuracy: %lf\n", k, evaluate_knn(k, &generic_dataset));
+    #if DEBUG
+    printf("++++++++++++++++++++++++++++++++++++++++++++\n\n");
+    #endif
   }
   //for values of k up to the number of points that exist in the dataset
   #endif
+
+  //Free CPU memory
+  for (int i = 0; i < generic_dataset.num_points; ++i) {
+    free(generic_dataset.points[i].dimension);
+  }
+  free(generic_dataset.points);
+  free(class_list.categories);
+
   return 0;
 }

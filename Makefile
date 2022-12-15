@@ -39,7 +39,6 @@ $(BIN)/$(TARGET): $(OBJS_KNN)
 
 $(BIN)/$(TEST_TARGET): $(OBJS_TEST)
 	$(NVCC) $(NVCCFLAGS) $+ -o $@
-#	./$(BIN)/$(TEST_TARGET)
 
 $(SRCDIR)/%.o: $(SRCDIR)/%.cu
 	$(NVCC) $(NVCCFLAGS) $< -c -o $@
