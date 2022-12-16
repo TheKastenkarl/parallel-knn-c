@@ -102,7 +102,7 @@ int mode(int *values, int num_values) {
   printf("[DEBUG] Values[%d]: %d\n", 0, values[0]);
   #endif
   for (int i = 1; i < num_values; i++) {
-    //if this is the same as teh last
+    //if this is the same as the last
     if (values[i-1] == values[i]) {
       //increase the couter
       current_counter += 1;
@@ -117,7 +117,7 @@ int mode(int *values, int num_values) {
       printf("[DEBUG] Max index updated to %d\n", i - 1);
       #endif
 
-      //set the couter to 0
+      //set the counter to 0
       current_counter = 0;
     }
     //If it's the last one, and the loop doesn't go through again
@@ -142,11 +142,30 @@ int mode(int *values, int num_values) {
   return values[max_index];
 }
 
+// Find the most frequent element in a C array (https://www.geeksforgeeks.org/frequent-element-array/)
+__host__ __device__ int most_frequent(int* arr, const int n) {
+  int maxcount = 0;
+  int element_having_max_freq;
+  for (int i = 0; i < n; ++i) {
+    int count = 0;
+    for (int j = 0; j < n; ++j) {
+      if (arr[i] == arr[j]) {
+        ++count;
+      }
+    }
+    if (count > maxcount) {
+      maxcount = count;
+      element_having_max_freq = arr[i];
+    }
+  }
+  return element_having_max_freq;
+}
+
 //Doing a k nearest neighbour search
 int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
   //Warn if k is even
   if (k % 2 == 0) {
-    printf("[WARN] Warning: %d is even. Tie cases have undefined behviour\n", k);
+    printf("[WARN] Warning: %d is even. Tie cases have undefined behaviour\n", k);
   }
 
   #if DEBUG
@@ -167,7 +186,7 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
     float distance = point_distance(compare, datapoints->points[i], datapoints->dimensionality);
 
     #if DEBUG
-    printf("[DEBUG] Point distance: %lf\n", distance);
+    printf("[DEBUG] Point distance: %.4f\n", distance);
     #endif
 
     //if the neighbour is closer than the last, or it's null pointer distance closest keep it in a distance array
@@ -180,11 +199,11 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
         update_index = j;
       }
       #if DEBUG
-      printf("[DEBUG] Distance[%d]: %lf\n", j, compare.neighbour[j].distance);
+      printf("[DEBUG] Distance[%d]: %.4f\n", j, compare.neighbour[j].distance);
       #endif
     }
     #if DEBUG
-    printf("[DEBUG] update_index max distance identified to be: %d at distance: %lf\n", update_index, compare.neighbour[update_index].distance);
+    printf("[DEBUG] update_index max distance identified to be: %d at distance: %.4f\n", update_index, compare.neighbour[update_index].distance);
     #endif
 
     //if the current point distance is less than the largest recorded distance, or if the distances haven't been set
@@ -192,7 +211,7 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
       //Update the distance at update_index
       #if DEBUG
       //printf("[DEBUG] Neighbour number: %d is either null or distance is shorter, updating pointer\n", i);
-      printf("[DEBUG] Compare neighbour[%d] = %lf\n", update_index, distance);
+      printf("[DEBUG] Compare neighbour[%d] = %.4f\n", update_index, distance);
       #endif
       compare.neighbour[update_index].distance = distance;
 
@@ -215,7 +234,7 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
     neighbour_categories[c] = compare.neighbour[c].neighbour_pointer->category;
 
     #if DEBUG
-    printf("[DEBUG] compare.neighbour[%d].distance: %lf\n", c, compare.neighbour[c].distance);
+    printf("[DEBUG] compare.neighbour[%d].distance: %.4f\n", c, compare.neighbour[c].distance);
     printf("[DEBUG] Category[%d]: %d\n", c, neighbour_categories[c]);
     #endif
   }
@@ -225,7 +244,12 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
 
   //Find the mode of the categories
   //Call fuction with array of int and the length of the array and return the result
-  return mode(neighbour_categories, k);
+  //int category = mode(neighbour_categories, k);
+  int category = most_frequent(neighbour_categories, k); // TODO
+  #if DEBUG
+  printf("[DEBUG] Determined class: %d\n", category);
+  #endif
+  return category;
 }
 
 // Calculate the local k nearest neighbors of a query point (= compare) given the dataset.
@@ -266,7 +290,7 @@ __global__ void calculate_local_knns(const int k, Comparison_Point* compare, Dat
   }
 
   #if DEBUG
-  printf("[DEBUG] Point ID (idx) = %d \t rank_distance = %d \t\t distance = %f\n", idx, rank_distance, distance);
+  printf("[DEBUG] Point ID (idx) = %d \t rank_distance = %d \t\t distance = %.4f\n", idx, rank_distance, distance);
   #endif
 
   // Check if the calculated distance in this thread belongs to the local k nearest neighbors and if yes,
@@ -276,7 +300,7 @@ __global__ void calculate_local_knns(const int k, Comparison_Point* compare, Dat
     local_nearest_neighbor->neighbour_pointer = &(datapoints->points[idx]);
     local_nearest_neighbor->distance = distance;
     #if DEBUG
-    printf("[DEBUG] local_knns[%d].distance = %f \t Point ID (idx) = %d \t Category: %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, idx, local_nearest_neighbor->neighbour_pointer->category);
+    printf("[DEBUG] local_knns[%d].distance = %.4f \t Point ID (idx) = %d \t Category: %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, idx, local_nearest_neighbor->neighbour_pointer->category);
     #endif
   }
 }
@@ -291,7 +315,7 @@ __global__ void calculate_global_knn(const int k, Point_Neighbour_Relationship* 
   if (idx >= num_query_points) return;
 
   // TODO - Idea to improve this kernel: Always only compare two local knns and do that in parallel and iteratively until
-  // only one knn vector is left which are then the global knn
+  // only one knn array is left which is then the global knn
 
   // Set all elements in block_offsets to zero
   for (int j = 0; j < num_local_knn; ++j) {
@@ -308,45 +332,35 @@ __global__ void calculate_global_knn(const int k, Point_Neighbour_Relationship* 
   // the same but we have to consider that we have already used the first element of one of the local k
   // nearest neighbors. This is done by adding an individual offset value to every local k nearest
   // neighbors subarray. These offset values are stored in 'block_offsets'.
-  // TODO: Handle the case when k is larger than a single array of local nearest neighbors because block size for distance calculations was too small
-  // TODO: What if k > TPB_LOCAL_KNN?
   for (int i = 0; i < k; ++i) {
     float min_distance = FLT_MAX; // initialize to max value
     int min_dist_block_id;
     for (int j = 0; j < num_local_knn; ++j) {
-      float min_dist_block = local_knns[j * k + block_offsets[idx * num_local_knn + j]].distance; // minimum unused distance of local knn subarray
-      if (min_dist_block < min_distance) {
-        min_distance = min_dist_block;
-        min_dist_block_id = j;
+      int block_offset = block_offsets[idx * num_local_knn + j];
+      if (block_offset >= 0) { // enforce that we can only use TPB_LOCAL_KNN elements from every local knn subarray
+        float min_dist_block = local_knns[j * k + block_offset].distance; // minimum unused distance of local knn subarray
+        if (min_dist_block < min_distance) {
+          min_distance = min_dist_block;
+          min_dist_block_id = j;
+        }
       }
     }
 
-    int index_local = min_dist_block_id * k + block_offsets[idx * num_local_knn + min_dist_block_id];
-    global_knn[i] = local_knns[index_local];
-    block_offsets[idx * num_local_knn + min_dist_block_id] += 1;
+    int min_dist_block_offset = block_offsets[idx * num_local_knn + min_dist_block_id];
+    int min_dist_index = min_dist_block_id * k + min_dist_block_offset;
+    global_knn[i] = local_knns[min_dist_index];
+    if (min_dist_block_offset < (TPB_LOCAL_KNN - 1)) {
+      block_offsets[idx * num_local_knn + min_dist_block_id] += 1;
+    } else {
+      // Handle the case k > TPB_LOCAL_KNN -> Then we need this to enforce that we can only
+      // use TPB_LOCAL_KNN elements from every local knn subarray
+      block_offsets[idx * num_local_knn + min_dist_block_id] = -1;
+    }
+    
     #if DEBUG
-    printf("[DEBUG] global_knn[%d].distance = %f \t index_local = %d \t category: %d\n", i, global_knn[i].distance, index_local, global_knn[i].neighbour_pointer->category);
+    printf("[DEBUG] global_knn[%d].distance = %.4f \t min_dist_index = %d \t category: %d\n", i, global_knn[i].distance, min_dist_index, global_knn[i].neighbour_pointer->category);
     #endif
   }
-}
-
-// Find the most frequent element in a C array (https://www.geeksforgeeks.org/frequent-element-array/)
-__host__ __device__ int most_frequent(int* arr, const int n) {
-  int maxcount = 0;
-  int element_having_max_freq;
-  for (int i = 0; i < n; ++i) {
-    int count = 0;
-    for (int j = 0; j < n; ++j) {
-      if (arr[i] == arr[j]) {
-        ++count;
-      }
-    }
-    if (count > maxcount) {
-      maxcount = count;
-      element_having_max_freq = arr[i];
-    }
-  }
-  return element_having_max_freq;
 }
 
 // Determine the class of a query point given its global k nearest neighbors. The result is stored in the variable query_classes.
@@ -374,7 +388,7 @@ __host__ __device__ void print_point(Point *point_arg, int dimensions) {
     if (i > 0) {
       printf(", ");
     }
-    printf("%lf", point_arg->dimension[i]);
+    printf("%.4f", point_arg->dimension[i]);
     i++;
   } while(i < dimensions);
   printf(") %d\n", point_arg->category);
@@ -406,14 +420,14 @@ __global__ void print_dataset_parallel(Dataset *dataset_arg) {
 int knn_search_parallel(int k, Comparison_Point compare, Dataset *datapoints) {
   // Warn if k is even
   if (k % 2 == 0) {
-    printf("[WARN] Warning: %d is even. Tie cases have undefined behviour\n", k);
+    printf("[WARN] Warning: %d is even. Tie cases have undefined behaviour\n", k);
   }
 
   #if DEBUG
   printf("[DEBUG] k: %d\n", k);
   #endif
 
-  // TODO: Change code so that multiple queries can be ahndled at once
+  // TODO: Change code so that multiple queries can be handled at once
   const int num_query_points = 1;
 
   // Declare GPU pointers
@@ -571,7 +585,7 @@ my_string extract_field(my_string line, int field) {
   //Return that value of the token
   for (int i = 1; i < field; i++) {
     #if DEBUG
-    printf("[DEBUG] Token is:  %s\n", token);
+    printf("[DEBUG] Token is: %s\n", token);
     #endif
 
     token = strtok(NULL, " ,");
@@ -640,7 +654,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
   //From that, it should return some struct
   FILE *file;
   if (access(filename.str, F_OK) == -1) {
-    printf("[ERROR] Could not find file");
+    printf("[ERROR] Could not find file.");
   }
   file = fopen(filename.str, "r");
 
@@ -740,6 +754,9 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
       sum_correct++;
     }
     #endif
+    #if DEBUG
+    printf("[DEBUG] Actual class: %d\n", benchmark_dataset->points[i].category);
+    #endif
   }
 
   accuracy = (float) sum_correct / (float) benchmark_dataset->num_points;
@@ -757,6 +774,20 @@ GREATEST_MAIN_DEFS();
 
 //This main function takes commandline arguments
 int main (int argc, char **argv) {
+  // TODO: Remove this
+  //printf("#################################################\n");
+  //printf("{0, 0, 2, 1, 1, 1, 2}\n");
+  //int test_array[] = {0, 0, 2, 1, 1, 1, 2};
+  //int len = 7;
+  //int test_mode = mode(test_array, len);
+  //for (int i = 0; i < len; ++i) {
+  //  printf("%d, ", test_array[i]);
+  //}
+  //printf("\ntest_mode = %d\n", test_mode);
+  //int test_most_frequent = most_frequent(test_array, len);
+  //printf("test_most_frequent = %d\n", test_most_frequent);
+  //printf("#################################################\n\n");
+
   //Wrapped in #ifndef so we can make a release version
   #ifndef NDEBUG
   //Setup required testing
@@ -801,7 +832,7 @@ int main (int argc, char **argv) {
   #endif
   #if EVALUATE
   for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
-    printf("k: %d, accuracy: %lf\n", k, evaluate_knn(k, &generic_dataset));
+    printf("k: %d, accuracy: %.4f\n", k, evaluate_knn(k, &generic_dataset));
     #if DEBUG
     printf("++++++++++++++++++++++++++++++++++++++++++++\n\n");
     #endif
