@@ -6,38 +6,35 @@
 //Defining tolerances for tests
 #define FLOAT_TOLERANCE 0.01
 
-TEST mode_3_inputs(void) {
+TEST most_frequent_3_inputs(void) {
   //Setup array of integers
   int inputs[3] = {3, 3, 7};
 
   //Pass array of integers into function
-  //Check mode is correct
-
-  ASSERT_EQ(3, mode(inputs, 3));
+  //Check if most frequent element is correct
+  ASSERT_EQ(3, most_frequent(inputs, 3));
 
   PASS();
 }
 
-TEST mode_with_zero (void) {
+TEST most_frequent_with_zero (void) {
   //Setup array of integers
   int inputs[3] = {0, 1, 1};
 
   //Pass array of integers into function
-  //Check mode is correct
-
-  ASSERT_EQ(1, mode(inputs, 3));
+  //Check if most frequent element is correct
+  ASSERT_EQ(1, most_frequent(inputs, 3));
 
   PASS();
 }
 
-TEST mode_7_inputs(void) {
+TEST most_frequent_7_inputs(void) {
   //Setup array of integers
   int inputs[7] = {1, 2, 3, 1, 7, 8, 1};
 
   //Pass array of integers into function
-  //Check mode is correct
-
-  ASSERT_EQ(1, mode(inputs, 7));
+  //Check if most frequent element is correct
+  ASSERT_EQ(1, most_frequent(inputs, 7));
 
   PASS();
 }
@@ -362,9 +359,9 @@ SUITE(external_suite) {
 
     RUN_TEST(classify_int);
 
-    RUN_TEST(mode_3_inputs);
-    RUN_TEST(mode_with_zero);
-    RUN_TEST(mode_7_inputs);
+    RUN_TEST(most_frequent_3_inputs);
+    RUN_TEST(most_frequent_with_zero);
+    RUN_TEST(most_frequent_7_inputs);
 
     RUN_TEST(compare_ints);
     RUN_TEST(compare_greater_int);
