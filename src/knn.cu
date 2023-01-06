@@ -5,16 +5,14 @@
 #include <unistd.h>
 #include <assert.h>
 #include <float.h>
-#include <thrust/sort.h>
-#include <thrust/execution_policy.h>
 
 #include <time.h>
 
 #include "greatest.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
-#define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
+#define EVALUATE 0  // Choose between evaluation mode (1) and user mode (0)
+#define CUDA 0      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
 #define TIMER 0     // define whether you want to measure and print the execution time of certain functions
 
@@ -271,7 +269,7 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
     local_nearest_neighbor->neighbour_pointer = &(datapoints->points[id_datapoint]);
     local_nearest_neighbor->distance = distance;
     #if DEBUG
-    printf("[DEBUG] local_knns[%d].distance = %.4f \t id_datapoint = %d \t Category: %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, id_datapoint, local_nearest_neighbor->neighbour_pointer->category);
+    printf("[DEBUG] local_knns[%d].distance = %.4f \t id_datapoint = %d \t Category: %d \t id_cpoint = %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, id_datapoint, local_nearest_neighbor->neighbour_pointer->category, id_cpoint);
     #endif
   }
 }
@@ -293,7 +291,7 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
  * the global knns for the first query point, indices k,...,(2k-1) store
  * the global knns for the second query point, and so on.
  */
-__global__ void calculate_global_knn(const int k, const int num_cpoints, Point_Neighbour_Relationship local_knns[], const int blockDimX_local_knn, int block_offsets[], Point_Neighbour_Relationship global_knn[]) {
+__global__ void calculate_global_knn(const int k, const int num_cpoints, Point_Neighbour_Relationship local_knns[], const int blockDimX_local_knn, int block_offsets[], int global_knn_classes[]) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_cpoints) return;
 
@@ -330,7 +328,7 @@ __global__ void calculate_global_knn(const int k, const int num_cpoints, Point_N
 
     int min_dist_block_offset = block_offsets[idx * blockDimX_local_knn + min_dist_block_id];
     int min_dist_index = k * blockDimX_local_knn * idx + min_dist_block_id * k + min_dist_block_offset;
-    global_knn[i] = local_knns[min_dist_index];
+    global_knn_classes[k * idx + i] = local_knns[min_dist_index].neighbour_pointer->category;
     if (min_dist_block_offset < (TPB_LOCAL_KNN_X - 1)) {
       block_offsets[idx * blockDimX_local_knn + min_dist_block_id] += 1;
     } else {
@@ -340,7 +338,7 @@ __global__ void calculate_global_knn(const int k, const int num_cpoints, Point_N
     }
     
     #if DEBUG
-    printf("[DEBUG] global_knn[%d].distance = %.4f \t min_dist_index = %d \t category: %d\n", i, global_knn[i].distance, min_dist_index, global_knn[i].neighbour_pointer->category);
+    printf("[DEBUG] global_knn_classes[%d] = %d \t id_cpoint = %d\n", k * idx + i, global_knn_classes[k * idx + i], idx);
     #endif
   }
 }
@@ -455,12 +453,15 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   printf("[DEBUG] k: %d\n", k);
   #endif
 
-  // Declare pointers pointing to GPU memory
+  // Declare pointers pointing to CPU memory
+  int* global_knn_classes_host;
   int* cpoint_classes_host;
+
+  // Declare pointers pointing to GPU memory
   Comparison_Point* cpoints_device;
   Dataset* datapoints_device;
   Point_Neighbour_Relationship* local_knns_device;
-  Point_Neighbour_Relationship* global_knn_device;
+  int* global_knn_classes_device;
 
   // GPU pointers required for deep copying the cpoints and datapoints variables
   float* cpoint_dimensions_device[num_cpoints]; // array of pointers for storing the dimensions (x-, y-, ... values) of the comparison points
@@ -468,10 +469,10 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   float* point_dimensions_device[datapoints->num_points]; // array of pointers for storing the dimensions (x-, y-, ... values) of the points in the dataset
 
   // GPU pointers required as helper variables
-  int* cpoint_classes_device;
   int* block_offsets;
 
   // Allocate CPU memory
+  global_knn_classes_host = (int*) malloc(k * num_cpoints * sizeof(int));
   cpoint_classes_host = (int*) malloc(num_cpoints * sizeof(int));
 
   // Allocate GPU memory
@@ -484,8 +485,7 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   for (int i = 0; i < datapoints->num_points; ++i) {
     cudaMalloc(&point_dimensions_device[i], datapoints->dimensionality * sizeof(float));
   }
-  cudaMalloc(&global_knn_device, k * num_cpoints * sizeof(Point_Neighbour_Relationship));
-  cudaMalloc(&cpoint_classes_device, num_cpoints * sizeof(int));
+  cudaMalloc(&global_knn_classes_device, k * num_cpoints * sizeof(int));
 
   // Copy memory to the GPU
   for (int i = 0; i < num_cpoints; ++i) {
@@ -517,16 +517,17 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   // Initialize the grid and block dimensions and calculate the global k nearest neighbors
   cudaMalloc(&block_offsets, num_cpoints * blockDimX_local_knn * sizeof(int));
   const int num_blocks_global_knn = (num_cpoints + TPB_GLOBAL_KNN - 1) / TPB_GLOBAL_KNN;
-  calculate_global_knn<<<num_blocks_global_knn, TPB_GLOBAL_KNN>>>(k, num_cpoints, local_knns_device, blockDimX_local_knn, block_offsets, global_knn_device);
+  calculate_global_knn<<<num_blocks_global_knn, TPB_GLOBAL_KNN>>>(k, num_cpoints, local_knns_device, blockDimX_local_knn, block_offsets, global_knn_classes_device);
   cudaFree(block_offsets);
   cudaDeviceSynchronize();
 
-  // Determine the category of the query sample by determining the majority class of the k nearest neighbors
-  smem_size = k * TPB_GLOBAL_KNN * sizeof(int);
-  determine_classes<<<num_blocks_global_knn, TPB_GLOBAL_KNN, smem_size>>>(k, num_cpoints, global_knn_device, cpoint_classes_device);
-
   // Copy the result from GPU memory to the CPU memory
-  cudaMemcpy(cpoint_classes_host, cpoint_classes_device, num_cpoints * sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(global_knn_classes_host, global_knn_classes_device, k * num_cpoints * sizeof(int), cudaMemcpyDeviceToHost);
+
+  // Determine the category of the query sample by determining the majority class of the k nearest neighbors (on CPU)
+  for (int i = 0; i < num_cpoints; ++i) {
+    cpoint_classes_host[i] = most_frequent(&global_knn_classes_host[i * k], k);
+  }
 
   // Free the GPU memory
   cudaFree(cpoints_device);
@@ -539,8 +540,6 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
     cudaFree(point_dimensions_device[i]);
   }
   cudaFree(local_knns_device);
-  cudaFree(global_knn_device);
-  cudaFree(cpoint_classes_device);
 
   return cpoint_classes_host;
 }
@@ -874,7 +873,9 @@ int main (int argc, char **argv) {
     clock_t start, end;
     double time_used;
     start = clock();
+    #endif
     int category = knn_search(k, compare, &generic_dataset);
+    #if TIMER
     end = clock();
     time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
     printf("Time used for %d k neigbours: %f \n", k, time_used);
