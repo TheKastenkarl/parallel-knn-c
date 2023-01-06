@@ -5,13 +5,15 @@
 #include <unistd.h>
 #include <assert.h>
 #include <float.h>
+#include <thrust/sort.h>
+#include <thrust/execution_policy.h>
 
 #include <time.h>
 
 #include "greatest.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE 0  // Choose between evaluation mode (1) and user mode (0)
+#define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
 #define TIMER 0     // define whether you want to measure and print the execution time of certain functions
