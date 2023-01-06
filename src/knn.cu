@@ -6,15 +6,18 @@
 #include <assert.h>
 #include <float.h>
 
+#include <time.h>
+
 #include "greatest.h"
 #include "terminal_user_input.h"
 
-#define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
+#define EVALUATE 0  // Choose between evaluation mode (1) and user mode (0)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
+#define TIMER 0     // define whether you want to measure and print the execution time of certain functions
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
-#define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (x-dim: Number of query points)
+#define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
 #define TPB_GLOBAL_KNN 32   // Threads per block for calculating the global k nearest neighbors and determining the class
 
 //Define a testing suite that is external to reduce code in this file
@@ -358,11 +361,32 @@ __global__ void determine_classes(const int k, const int num_cpoints, Point_Neig
 
   extern __shared__ int s_neighbour_categories[]; // size: k * blockDim.x * 4 byte (TODO: be careful because max. size of shared memory is 48KB)
 
+  #if TIMER
+  clock_t start, end;
+  start = clock();
+  double time_used;
+  #endif
+  
   for (int i = 0; i < k; ++i) {
     s_neighbour_categories[k * idx + i] = global_knn[k * idx + i].neighbour_pointer->category;
   }
 
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("time for first for loop %f \n", time_used);
+
+  start = clock();
+  #endif
+
   cpoint_classes[idx] = most_frequent(s_neighbour_categories + k * idx, k);
+
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("time for most frequent %f \n", time_used);
+  #endif
+
   #if DEBUG
   printf("[DEBUG] Determined class: %d\n", cpoint_classes[idx]);
   #endif
@@ -712,6 +736,13 @@ Classifier_List new_classifier_list() {
 //Takes k as a parameter and also a dataset
 //Measure the accuracy of the knn given a dataset, using the remove one method
 float evaluate_knn(int k, Dataset *benchmark_dataset) {
+
+  #if TIMER
+  clock_t start, end;
+  double time_used;
+  start = clock();
+  #endif
+  
   #if DEBUG
   printf("============================================\n");
   printf("[DEBUG] Complete dataset:\n");
@@ -728,6 +759,7 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
   int sum_correct = 0;
   // Make a copy of the dataset, except missing the i'th term.
   for (int i = 0; i < benchmark_dataset->num_points; i++) {
+    
     //Loop through the dataset the number of times there are points
     #if DEBUG
     printf("============================================\n");
@@ -774,6 +806,12 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
   //Free CPU memory
   free(comparison_dataset.points);
 
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("Time used for %d k neigbours: %f \n", k, time_used);
+  #endif
+
   return accuracy;
 }
 
@@ -784,6 +822,7 @@ GREATEST_MAIN_DEFS();
 
 //This main function takes commandline arguments
 int main (int argc, char **argv) {
+  
   //Wrapped in #ifndef so we can make a release version
   #ifndef NDEBUG
   //Setup required testing
@@ -810,11 +849,35 @@ int main (int argc, char **argv) {
     Comparison_Point compare = read_comparison_point_user(generic_dataset.dimensionality);
     int k = read_integer("k: ");
     #if CUDA
+
+    #if TIMER
+    clock_t start, end;
+    double time_used;
+    start = clock();
+    #endif
+
     int* cpoint_classes= knn_search_parallel(k, &compare, 1, &generic_dataset);
     int category = cpoint_classes[0];
     free(cpoint_classes);
+
+    #if TIMER
+    end = clock();
+    time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+    printf("Time used for %d k neigbours: %f \n", k, time_used);
+    #endif
+
     #else
+
+    #if TIMER
+    clock_t start, end;
+    double time_used;
+    start = clock();
     int category = knn_search(k, compare, &generic_dataset);
+    end = clock();
+    time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+    printf("Time used for %d k neigbours: %f \n", k, time_used);
+    #endif
+
     #endif
     free(compare.dimension);
     compare.dimension = NULL;
