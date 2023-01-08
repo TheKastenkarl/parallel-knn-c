@@ -11,8 +11,10 @@
 #include "greatest.h"
 #include "terminal_user_input.h"
 
+#include "nvtx3.hpp"
+
 #define EVALUATE 0  // Choose between evaluation mode (1) and user mode (0)
-#define CUDA 0      // Choose between parallel/CUDA mode (1) and sequential mode (0)
+#define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
 #define TIMER 0     // define whether you want to measure and print the execution time of certain functions
 
@@ -525,9 +527,13 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   cudaMemcpy(global_knn_classes_host, global_knn_classes_device, k * num_cpoints * sizeof(int), cudaMemcpyDeviceToHost);
 
   // Determine the category of the query sample by determining the majority class of the k nearest neighbors (on CPU)
+  nvtxRangePushA("most_frequent");
   for (int i = 0; i < num_cpoints; ++i) {
+    
     cpoint_classes_host[i] = most_frequent(&global_knn_classes_host[i * k], k);
+    
   }
+  nvtxRangePop();
 
   // Free the GPU memory
   cudaFree(cpoints_device);
@@ -838,7 +844,8 @@ int main (int argc, char **argv) {
 
   Classifier_List class_list = new_classifier_list();
 
-  my_string filename = read_string("Filename: ");
+  my_string filename;
+  strcpy(filename.str, "/content/drive/MyDrive/Colab Notebooks/AppliedGPU_finalProject/datasets/huge_data.csv"); 
 
   //This is in user mode:
 
@@ -847,8 +854,15 @@ int main (int argc, char **argv) {
   #if !EVALUATE
   bool another_point = true;
   do {
-    Comparison_Point compare = read_comparison_point_user(generic_dataset.dimensionality);
-    int k = read_integer("k: ");
+    Comparison_Point compare;
+    int num_dimensions = generic_dataset.dimensionality;
+    compare.dimension = (float*) malloc(num_dimensions*sizeof(float));
+    for (int i = 0; i < num_dimensions; i++) {
+      
+      compare.dimension[i] = i;
+    }
+    
+    int k = 5;
     #if CUDA
 
     #if TIMER
@@ -891,7 +905,7 @@ int main (int argc, char **argv) {
 
     my_string class_string = classify(class_list, category);
     printf("Point classified as: %s\n", class_string.str);
-    another_point = read_boolean("Classify another point? ");
+    another_point = false;
   } while(another_point);
   #endif
   #if EVALUATE
