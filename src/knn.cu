@@ -444,7 +444,7 @@ __global__ void determine_majority_classes_parallel(const int k, Dataset const* 
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("time for first for loop %f \n", time_used);
+  printf("[TIMER] determine_majority_classes_parallel - fill shared memory %f \n", time_used);
 
   start = clock();
   #endif
@@ -454,7 +454,7 @@ __global__ void determine_majority_classes_parallel(const int k, Dataset const* 
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("time for most frequent %f \n", time_used);
+  printf("[TIMER] determine_majority_classes_parallel -  %f \n", time_used);
   #endif
 
   #if DEBUG
@@ -911,7 +911,7 @@ float evaluate_knn(const int k, Dataset* benchmark_dataset) {
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("Time used for k = %d neigbors: %f sec\n", k, time_used);
+  printf("[TIMER] evaluate_knn - execution time for k = %d neigbors: %f sec\n", k, time_used);
   #endif
 
   return accuracy;
@@ -971,7 +971,7 @@ int main (int argc, char **argv) {
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("Time used for %d k neigbours and %d query points: %f \n", k, num_query_points, time_used);
+  printf("[TIMER] main - knn_search_parallel - execution time for %d k neigbours and %d query points: %f \n", k, num_query_points, time_used);
   #endif
 
   #else
@@ -985,7 +985,7 @@ int main (int argc, char **argv) {
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("Time used for %d k neigbours and %d query points: %f \n", k, num_query_points, time_used);
+  printf("[TIMER] main - knn_search - execution time for %d k neigbours and %d query points: %f \n", k, num_query_points, time_used);
   #endif
 
   #endif
