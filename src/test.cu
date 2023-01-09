@@ -139,7 +139,7 @@ TEST find_1_nearest_neighbour(void) {
   free(single_point_dataset.points);
   free(single_point_dataset.categories);
   free(query_points.points);
-  free(query_points.neighbor_idx);
+  free(query_points.neighbor_ids);
   free(query_points.neighbor_distances);
   free(query_points.qpoint_categories);
 
@@ -170,7 +170,7 @@ TEST find_1_nearest_neighbour_parallel(void) {
   free(single_point_dataset.points);
   free(single_point_dataset.categories);
   free(query_points.points);
-  free(query_points.neighbor_idx);
+  free(query_points.neighbor_ids);
   free(query_points.neighbor_distances);
   free(query_points.qpoint_categories);
 
@@ -219,7 +219,7 @@ TEST find_3_nearest_neighbour(void) {
   free(point_dataset.points);
   free(point_dataset.categories);
   free(query_points.points);
-  free(query_points.neighbor_idx);
+  free(query_points.neighbor_ids);
   free(query_points.neighbor_distances);
   free(query_points.qpoint_categories);
 
@@ -266,7 +266,7 @@ TEST find_3_nearest_neighbour_parallel(void) {
   free(point_dataset.points);
   free(point_dataset.categories);
   free(query_points.points);
-  free(query_points.neighbor_idx);
+  free(query_points.neighbor_ids);
   free(query_points.neighbor_distances);
   free(query_points.qpoint_categories);
 
