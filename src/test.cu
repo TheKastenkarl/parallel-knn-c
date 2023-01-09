@@ -131,7 +131,7 @@ TEST find_1_nearest_neighbour(void) {
   // Create one query point
   float query_point[] = {3};
   Query_Points query_points(false, 1, 1, 1);
-  query_points.set_query_point(0, query_point);
+  query_points.set_point(0, query_point);
 
   // One point to compare to the rest
   ASSERT_EQ(category, knn_search(k, &query_points, &single_point_dataset));
@@ -162,7 +162,7 @@ TEST find_1_nearest_neighbour_parallel(void) {
   // Create one query point
   float query_point[] = {3};
   Query_Points query_points(false, 1, 1, 1);
-  query_points.set_query_point(0, query_point);
+  query_points.set_point(0, query_point);
 
   // One point to compare to the rest
   ASSERT_EQ(category, knn_search_parallel(k, &query_points, &single_point_dataset)[0]);
@@ -211,7 +211,7 @@ TEST find_3_nearest_neighbour(void) {
   // Create one query point
   float query_point[] = {6.5};
   Query_Points query_points(false, 1, 1, 1);
-  query_points.set_query_point(0, query_point);
+  query_points.set_point(0, query_point);
 
   // One point to compare to the rest
   ASSERT_EQ(1, knn_search(k, &query_points, &point_dataset));
@@ -258,7 +258,7 @@ TEST find_3_nearest_neighbour_parallel(void) {
   // Create one query point
   float query_point[] = {6.5};
   Query_Points query_points(false, 1, 1, 1);
-  query_points.set_query_point(0, query_point);
+  query_points.set_point(0, query_point);
 
   // One point to compare to the rest
   ASSERT_EQ(1, knn_search_parallel(k, &query_points, &point_dataset)[0]);

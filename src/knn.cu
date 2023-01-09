@@ -12,11 +12,12 @@
 #define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
-#define TIMER 0     // Define whether you want to measure and print the execution time of certain functions
+#define TIMER 0     // Define whether you want to measure and print the execution time of certain functions (1) or not (0)
+#define MAJORITY_CLASS_PARALLEL 0 // Choose if the majority class of the k nearest neighbors is determined in parallel (1) or sequentially (0)
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of dataset)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
-#define TPB_GLOBAL_KNN 32   // Threads per block for calculating the global k nearest neighbors and determining the class
+#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -90,7 +91,7 @@ public:
     }
   }
 
-  __host__ __device__ void set_query_point(const int qpoint_id, float* query_point) {
+  __host__ __device__ void set_point(const int qpoint_id, float* query_point) {
     float* point = this->get_point(qpoint_id);
     for (int i = 0; i < this->num_dimensions; ++i) {
       point[i] = query_point[i];
@@ -341,14 +342,14 @@ __global__ void calculate_local_knns(const int k, Query_Points* query_points, Da
  * the global knns for the second query point, and so on.
  */
 __global__ void calculate_global_knn(const int k, Dataset const* dataset, Query_Points* query_points, float local_knns_distances[], int local_knns_idx[], const int blockDimX_local_knn, int block_offsets[]) {
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= query_points->num_points) return;
+  const int id_qpoint = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id_qpoint >= query_points->num_points) return;
 
   // TODO - Idea to improve this kernel: Always only compare two local knns and do that in parallel and iteratively until only one knn array is left which is then the global knn
 
   // Set all elements in block_offsets to zero
   for (int j = 0; j < blockDimX_local_knn; ++j) {
-    block_offsets[idx * blockDimX_local_knn + j] = 0;
+    block_offsets[id_qpoint * blockDimX_local_knn + j] = 0;
   }
 
   // Find the global k nearest neighbors of from all the local k nearest neighbors
@@ -365,9 +366,9 @@ __global__ void calculate_global_knn(const int k, Dataset const* dataset, Query_
     float min_distance = FLT_MAX; // initialize to max value
     int min_dist_block_id;
     for (int j = 0; j < blockDimX_local_knn; ++j) {
-      int block_offset = block_offsets[idx * blockDimX_local_knn + j];
+      int block_offset = block_offsets[id_qpoint * blockDimX_local_knn + j];
       if (block_offset >= 0) { // enforce that we can only use TPB_LOCAL_KNN elements from every local knn subarray
-        float min_dist_block = local_knns_distances[k * blockDimX_local_knn * idx + k * j + block_offset]; // minimum unused distance of local knn subarray
+        float min_dist_block = local_knns_distances[k * blockDimX_local_knn * id_qpoint + k * j + block_offset]; // minimum unused distance of local knn subarray
         if (min_dist_block < min_distance) {
           min_distance = min_dist_block;
           min_dist_block_id = j;
@@ -375,21 +376,99 @@ __global__ void calculate_global_knn(const int k, Dataset const* dataset, Query_
       }
     }
 
-    int min_dist_block_offset = block_offsets[idx * blockDimX_local_knn + min_dist_block_id];
-    int min_dist_index = k * blockDimX_local_knn * idx + min_dist_block_id * k + min_dist_block_offset;
-    query_points->neighbor_idx[k * idx + i] = local_knns_idx[min_dist_index]; // = id_datapoint
-    query_points->neighbor_distances[k * idx + i] = local_knns_distances[min_dist_index];
+    int min_dist_block_offset = block_offsets[id_qpoint * blockDimX_local_knn + min_dist_block_id];
+    int min_dist_index = k * blockDimX_local_knn * id_qpoint + min_dist_block_id * k + min_dist_block_offset;
+    query_points->neighbor_idx[k * id_qpoint + i] = local_knns_idx[min_dist_index]; // = id_datapoint
+    query_points->neighbor_distances[k * id_qpoint + i] = local_knns_distances[min_dist_index];
     if (min_dist_block_offset < (TPB_LOCAL_KNN_X - 1)) {
-      block_offsets[idx * blockDimX_local_knn + min_dist_block_id] += 1;
+      block_offsets[id_qpoint * blockDimX_local_knn + min_dist_block_id] += 1;
     } else {
       // Handle the case k > TPB_LOCAL_KNN_X -> Then we need this to enforce that we can only
       // use TPB_LOCAL_KNN_X elements from every local knn subarray
-      block_offsets[idx * blockDimX_local_knn + min_dist_block_id] = -1;
+      block_offsets[id_qpoint * blockDimX_local_knn + min_dist_block_id] = -1;
     }
     
     #if DEBUG
-    int id_datapoint = query_points->neighbor_idx[k * idx + i];
-    printf("[DEBUG] calculate_global_knn | q_points->n_distances[%d] = %.4f \t id_datapoint = %d \t category = %d \t id_qpoint = %d\n", k * idx + i, query_points->neighbor_distances[k * idx + i], id_datapoint, dataset->categories[id_datapoint], idx);
+    int id_datapoint = query_points->neighbor_idx[k * id_qpoint + i];
+    printf("[DEBUG] calculate_global_knn | q_points->n_distances[%d] = %.4f \t id_datapoint = %d \t category = %d \t id_qpoint = %d\n", k * id_qpoint + i, query_points->neighbor_distances[k * id_qpoint + i], id_datapoint, dataset->categories[id_datapoint], id_qpoint);
+    #endif
+  }
+}
+
+/**
+ * Determine the classes of multiple comparison points given their global k nearest neighbors
+ * (global knns) by determining the majority class of the global knns. Each thread handles one
+ * comparison point.
+ *
+ * @param k Number of neighbor to consider to determine the k nearest neighbors.
+ * @param num_cpoints Number of comparison points.
+ * @param global_knn Array containing the global knns.
+ * @param cpoint_classes Array in which the results, i.e. the classes of all comparison points,
+ * are stored. Must be allocated before calling the function and must have size 'num_cpoints'.
+ * Index 0 stores the class of the first query point, index 1 stores the class of the second
+ * query point, and so on.
+ */
+__global__ void determine_majority_classes_parallel(const int k, Dataset const* dataset, Query_Points* query_points) {
+  const int id_qpoint = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id_qpoint >= query_points->num_points) return;
+
+  extern __shared__ int s_neighbour_categories[]; // size: k * blockDim.x * 4 byte (TODO: be careful because max. size of shared memory is 48KB)
+
+  #if TIMER
+  clock_t start, end;
+  start = clock();
+  double time_used;
+  #endif
+
+  for (int i = 0; i < k; ++i) {
+    int point_id = query_points->neighbor_idx[id_qpoint * k + i];
+    s_neighbour_categories[id_qpoint * k + i] = dataset->categories[point_id];
+  }
+
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("time for first for loop %f \n", time_used);
+
+  start = clock();
+  #endif
+
+  query_points->qpoint_categories[id_qpoint] = most_frequent(s_neighbour_categories + k * id_qpoint, k);
+
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("time for most frequent %f \n", time_used);
+  #endif
+
+  #if DEBUG
+  printf("[DEBUG] Predicted category = %d \t id_qpoint = %d\n", query_points->qpoint_categories[id_qpoint], id_qpoint);
+  #endif
+}
+
+/**
+ * Determine the classes of multiple comparison points given their global k nearest neighbors
+ * (global knns) by determining the majority class of the global knns.
+ *
+ * @param k Number of neighbor to consider to determine the k nearest neighbors.
+ * @param num_cpoints Number of comparison points.
+ * @param global_knn Array containing the global knns.
+ * @param cpoint_classes Array in which the results, i.e. the classes of all comparison points,
+ * are stored. Must be allocated before calling the function and must have size 'num_cpoints'.
+ * Index 0 stores the class of the first query point, index 1 stores the class of the second
+ * query point, and so on.
+ */
+__host__ void determine_majority_classes(const int k, Dataset const* dataset, Query_Points* query_points) {
+  for (int i = 0; i < query_points->num_points; ++i) {
+    // Store the categories of the global k nearest neighbors in an array
+    int neighbour_categories[k];
+    for (int c = 0; c < k; c++) {
+      int point_id = query_points->neighbor_idx[i * k + c];
+      neighbour_categories[c] = dataset->categories[point_id];
+    }
+    query_points->qpoint_categories[i] = most_frequent(neighbour_categories, k);
+    #if DEBUG
+    printf("[DEBUG] Predicted category = %d \t id_qpoint = %d\n", query_points->qpoint_categories[i], i);
     #endif
   }
 }
@@ -529,22 +608,19 @@ int* knn_search_parallel(const int k, Query_Points* query_points, Dataset const*
   cudaFree(block_offsets);
   cudaDeviceSynchronize();
 
+  #if MAJORITY_CLASS_PARALLEL
+  // Determine the category of the query points by determining the majority class of the global k nearest neighbors (in parallel)
+  smem_size = k * TPB_GLOBAL_KNN * sizeof(int);
+  determine_majority_classes_parallel<<<num_blocks_global_knn, TPB_GLOBAL_KNN, smem_size>>>(k, dataset_device, query_points_device);
   // Copy the result from GPU memory to the CPU memory
   cudaMemcpy(query_points->neighbor_idx, query_points_neighbor_idx_device, k * query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
-
-  // Determine the category of the query samples by determining the majority class of the global k nearest neighbors (on CPU)
-  for (int i = 0; i < query_points->num_points; ++i) {
-    // Store the categories of the global k nearest neighbors in an array
-    int neighbour_categories[k];
-    for (int c = 0; c < k; c++) {
-      int point_id = query_points->neighbor_idx[i * k + c];
-      neighbour_categories[c] = dataset->categories[point_id];
-    }
-    query_points->qpoint_categories[i] = most_frequent(neighbour_categories, k);
-    #if DEBUG
-    printf("[DEBUG] Predicted category = %d \t id_qpoint = %d\n", query_points->qpoint_categories[i], i);
-    #endif
-  }
+  cudaMemcpy(query_points->qpoint_categories, query_points_qpoint_categories_device, query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
+  #else
+  // Copy the result from GPU memory to the CPU memory
+  cudaMemcpy(query_points->neighbor_idx, query_points_neighbor_idx_device, k * query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
+  // Determine the category of the query points by determining the majority class of the global k nearest neighbors (sequentially)
+  determine_majority_classes(k, dataset, query_points);
+  #endif
 
   // Free the GPU memory
   cudaFree(query_points_device);
@@ -784,7 +860,7 @@ float evaluate_knn(const int k, Dataset* benchmark_dataset) {
 
     // Create a query point out of that i'th term
     Query_Points query_point(false, benchmark_dataset->num_dimensions, 1, k);
-    query_point.set_query_point(0, benchmark_dataset->get_point(i));
+    query_point.set_point(0, benchmark_dataset->get_point(i));
     #if DEBUG
     printf("[DEBUG] Gets to the knn search\n");
     #endif
