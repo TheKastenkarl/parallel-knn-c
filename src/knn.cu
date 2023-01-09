@@ -8,6 +8,7 @@
 
 #include "greatest.h"
 #include "terminal_user_input.h"
+#include "nvtx3.hpp"
 
 #define SEED 10     // seed to allow better comparison between different runs during wich randomness is involved
 
@@ -627,7 +628,9 @@ int* knn_search_parallel(const int k, Query_Points* query_points, Dataset const*
   #if MAJORITY_CLASS_PARALLEL
   // Determine the category of the query points by determining the majority class of the global k nearest neighbors (in parallel)
   smem_size = k * TPB_GLOBAL_KNN * sizeof(int);
+  nvtxRangePush("knn_search_parallel - determine_majority_classes_parallel (parallel)")
   determine_majority_classes_parallel<<<num_blocks_global_knn, TPB_GLOBAL_KNN, smem_size>>>(k, dataset_device, query_points_device);
+  nvtxRangePop();
   // Copy the result from GPU memory to the CPU memory
   cudaMemcpy(query_points->neighbor_idx, query_points_neighbor_idx_device, k * query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
   cudaMemcpy(query_points->qpoint_categories, query_points_qpoint_categories_device, query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
@@ -635,7 +638,9 @@ int* knn_search_parallel(const int k, Query_Points* query_points, Dataset const*
   // Copy the result from GPU memory to the CPU memory
   cudaMemcpy(query_points->neighbor_idx, query_points_neighbor_idx_device, k * query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
   // Determine the category of the query points by determining the majority class of the global k nearest neighbors (sequentially)
+  nvtxRangePush("knn_search_parallel - determine_majority_classes (sequential)")
   determine_majority_classes(k, dataset, query_points);
+  nvtxRangePop();
   #endif
 
   // Free the GPU memory
@@ -965,8 +970,9 @@ int main (int argc, char **argv) {
   #endif
 
   
-
+  nvtxRangePush("main - knn_search_parallel (parallel)");
   int* qpoint_categories = knn_search_parallel(k, &query_points, &generic_dataset);
+  nvtxRangePop();
 
   #if TIMER
   end = clock();
@@ -981,7 +987,9 @@ int main (int argc, char **argv) {
   double time_used;
   start = clock();
   #endif
+  nvtxRangePush("main - knn_search (sequential)");
   int* qpoint_categories = knn_search(k, &query_points, &generic_dataset);
+  nvtxRangePop();
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
