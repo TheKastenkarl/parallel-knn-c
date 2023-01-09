@@ -134,7 +134,7 @@ TEST find_1_nearest_neighbour(void) {
   query_points.set_point(0, query_point);
 
   // One point to compare to the rest
-  ASSERT_EQ(category, knn_search(k, &query_points, &single_point_dataset));
+  ASSERT_EQ(category, knn_search(k, &query_points, &single_point_dataset)[0]);
 
   free(single_point_dataset.points);
   free(single_point_dataset.categories);
@@ -214,7 +214,7 @@ TEST find_3_nearest_neighbour(void) {
   query_points.set_point(0, query_point);
 
   // One point to compare to the rest
-  ASSERT_EQ(1, knn_search(k, &query_points, &point_dataset));
+  ASSERT_EQ(1, knn_search(k, &query_points, &point_dataset)[0]);
 
   free(point_dataset.points);
   free(point_dataset.categories);
