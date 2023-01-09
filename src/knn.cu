@@ -14,8 +14,8 @@
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
 #define TIMER 0     // Define whether you want to measure and print the execution time of certain functions
 
-#define TPB_LOCAL_KNN_X 32 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of dataset)
-#define TPB_LOCAL_KNN_Y 1   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
+#define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of dataset)
+#define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
 #define TPB_GLOBAL_KNN 32   // Threads per block for calculating the global k nearest neighbors and determining the class
 
 //Define a testing suite that is external to reduce code in this file
@@ -149,7 +149,7 @@ int compare_int(const void *v1, const void *v2) {
 // Find the most frequent element in a C array (https://www.geeksforgeeks.org/frequent-element-array/)
 __host__ __device__ int most_frequent(int const* arr, const int n) {
   int maxcount = 0;
-  int element_having_max_freq;
+  int element_having_max_freq = -1;
   for (int i = 0; i < n; ++i) {
     int count = 0;
     for (int j = 0; j < n; ++j) {
@@ -312,13 +312,13 @@ __global__ void calculate_local_knns(const int k, Query_Points* query_points, Da
   // Check if the calculated distance in this thread belongs to the local k nearest neighbors and if yes,
   // add the corresponding point to the array storing the local k nearest neighbors
   if (rank_distance < k) {
-    float* local_nn_distance = &(local_knns_distances[k * blockDim.x * blockIdx.y + k * blockIdx.x + rank_distance]);
+    float* local_nn_distance = &(local_knns_distances[k * gridDim.x * id_qpoint + k * blockIdx.x + rank_distance]);
     *local_nn_distance = distance;
-    int* local_nn_id = &(local_knns_idx[k * blockDim.x * blockIdx.y + k * blockIdx.x + rank_distance]);
+    int* local_nn_id = &(local_knns_idx[k * gridDim.x * id_qpoint + k * blockIdx.x + rank_distance]);
     *local_nn_id = id_datapoint;
 
     #if DEBUG
-    printf("[DEBUG] calculate_local_knns | local_knns_distances[%d] = %.4f \t id_datapoint = %d \t Category: %d \t id_qpoint = %d\n", k * blockIdx.x + rank_distance, distance, id_datapoint, dataset->categories[id_datapoint], id_qpoint);
+    printf("[DEBUG] calculate_local_knns | local_knns_distances[%d] = %.4f \t id_datapoint = %d \t category = %d \t id_qpoint = %d\n", k * gridDim.x * id_qpoint + k * blockIdx.x + rank_distance, distance, id_datapoint, dataset->categories[id_datapoint], id_qpoint);
     #endif
   }
 }
@@ -389,7 +389,7 @@ __global__ void calculate_global_knn(const int k, Dataset const* dataset, Query_
     
     #if DEBUG
     int id_datapoint = query_points->neighbor_idx[k * idx + i];
-    printf("[DEBUG] calculate_global_knn | q_points->n_distances[%d] = %.4f \t id_datapoint = %d \t Category: %d \t id_qpoint = %d\n", k * idx + i, query_points->neighbor_distances[k * idx + i], id_datapoint, dataset->categories[id_datapoint], idx);
+    printf("[DEBUG] calculate_global_knn | q_points->n_distances[%d] = %.4f \t id_datapoint = %d \t category = %d \t id_qpoint = %d\n", k * idx + i, query_points->neighbor_distances[k * idx + i], id_datapoint, dataset->categories[id_datapoint], idx);
     #endif
   }
 }
@@ -455,6 +455,13 @@ int* knn_search_parallel(const int k, Query_Points* query_points, Dataset const*
   printf("[DEBUG] k: %d\n", k);
   #endif
 
+  #if DEBUG
+  for (int i = 0; i < query_points->num_points; ++i) {
+    printf("[DEBUG] Query point %d: ", i);
+    print_point(query_points->get_point(i), -1, query_points->num_dimensions);
+  }
+  #endif
+
   // Declare pointers pointing to GPU memory
   Query_Points* query_points_device;
   Dataset* dataset_device;
@@ -507,7 +514,7 @@ int* knn_search_parallel(const int k, Query_Points* query_points, Dataset const*
 
   // Initialize the grid and block dimensions and calculate the local k nearest neighbors
   // Use 2D block and thread grid: x - dimension of the dataset points, y - dimension of the query points
-  const int blockDimY_local_knn = (dataset->num_points + TPB_LOCAL_KNN_Y - 1) / TPB_LOCAL_KNN_Y;
+  const int blockDimY_local_knn = (query_points->num_points + TPB_LOCAL_KNN_Y - 1) / TPB_LOCAL_KNN_Y;
   const int blockDimX_local_knn = (dataset->num_points + TPB_LOCAL_KNN_X - 1) / TPB_LOCAL_KNN_X;
   int smem_size = TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y * sizeof(float);
   cudaMalloc(&local_knns_distances_device, query_points->num_points * k * blockDimX_local_knn * sizeof(float));
@@ -686,7 +693,7 @@ void Dataset::read_dataset_file(const my_string filename, Classifier_List* class
   // Struct should contain a 2d array with the lines, in each with data separated into array elements
   char *buffer;
   buffer = (char*) malloc(1024 * sizeof(char));
-  fscanf(file, "%s\n", buffer);
+  (void)! fscanf(file, "%s\n", buffer);
 
   // Count the commas
   this->num_dimensions = count_fields(buffer) - 1;
@@ -706,7 +713,7 @@ void Dataset::read_dataset_file(const my_string filename, Classifier_List* class
     ++i;
     //Don't do this on the last iteration of the loop
     if (!(i == this->num_points)) {
-      fscanf(file, "%s\n", buffer);
+      (void)! fscanf(file, "%s\n", buffer);
       strcpy(buffer_string.str, buffer);
     }
   } while (i < this->num_points);
