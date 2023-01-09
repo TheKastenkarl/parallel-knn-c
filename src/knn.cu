@@ -17,6 +17,11 @@
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
 #define TIMER 0     // define whether you want to measure and print the execution time of certain functions
+#define NUMNEIGHBOURS 5 // define number of knearest neighbours that are checked for the classification (only used if evaluation mode is 0, i.e. user mode is activated)
+#define MULTIPLEQUERYPOINTS 1 // define whether you want to execute the knn search for multiple query points (1) or for a single point (0)
+#define NUMQUERYPOINTS 30 // define number of query points you want to try (only relevant if MULTIPLEQUERYPOINTS is set to 1)
+
+#define SEED 10 // seed for random point generation
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
@@ -529,9 +534,7 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   // Determine the category of the query sample by determining the majority class of the k nearest neighbors (on CPU)
   nvtxRangePushA("most_frequent");
   for (int i = 0; i < num_cpoints; ++i) {
-    
     cpoint_classes_host[i] = most_frequent(&global_knn_classes_host[i * k], k);
-    
   }
   nvtxRangePop();
 
@@ -829,7 +832,7 @@ GREATEST_MAIN_DEFS();
 
 //This main function takes commandline arguments
 int main (int argc, char **argv) {
-  
+  srand(SEED); // seed
   //Wrapped in #ifndef so we can make a release version
   #ifndef NDEBUG
   //Setup required testing
@@ -852,7 +855,16 @@ int main (int argc, char **argv) {
   Dataset generic_dataset = read_dataset_file(filename, &class_list);
 
   #if !EVALUATE
-  bool another_point = true;
+  #if MULTIPLEQUERYPOINTS
+  int another_point = NUMQUERYPOINTS;
+  #else
+  int another_point = 1;
+  #endif
+  #if TIMER
+  clock_t start_total, end_total;
+  double time_used_total;
+  start_total = clock();
+  #endif
   do {
     Comparison_Point compare;
     int num_dimensions = generic_dataset.dimensionality;
@@ -862,7 +874,7 @@ int main (int argc, char **argv) {
       compare.dimension[i] = i;
     }
     
-    int k = 5;
+    int k = NUMNEIGHBOURS;
     #if CUDA
 
     #if TIMER
@@ -871,14 +883,32 @@ int main (int argc, char **argv) {
     start = clock();
     #endif
 
-    int* cpoint_classes= knn_search_parallel(k, &compare, 1, &generic_dataset);
-    int category = cpoint_classes[0];
+    Comparison_Point comparisonPoints[NUMQUERYPOINTS];
+
+    for (int i = 0; i < NUMQUERYPOINTS; i++){
+      for (int j = 0; j < num_dimensions; j++) {
+      
+        compare.dimension[j] = j * (rand() % 20);
+      }
+      comparisonPoints[i] = compare;
+    }
+
+
+    int* cpoint_classes= knn_search_parallel(k, comparisonPoints, NUMQUERYPOINTS, &generic_dataset);
+
+    int category;
+    for (int i = 0; i < NUMQUERYPOINTS; i++){
+      category = cpoint_classes[i];
+      my_string class_string = classify(class_list, category);
+      printf("Point number %d classified as: %s\n", i, class_string.str);
+    }
+
     free(cpoint_classes);
 
     #if TIMER
     end = clock();
     time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d k neigbours: %f \n", k, time_used);
+    printf("Time used for %d query points, %d k neigbours: %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used);
     #endif
 
     #else
@@ -902,12 +932,23 @@ int main (int argc, char **argv) {
     #if DEBUG
     printf("[DEBUG] Category is: %d\n", category);
     #endif
-
+    #if !CUDA
     my_string class_string = classify(class_list, category);
     printf("Point classified as: %s\n", class_string.str);
-    another_point = false;
-  } while(another_point);
+    another_point--;
+    #endif
+    #if CUDA
+    another_point = 0;
+    #endif
+  } while(another_point > 0);
+  #if TIMER
+  end_total = clock();
+  time_used_total = ((double) (end_total - start_total)) / CLOCKS_PER_SEC;
+  printf("Total time used for %d query points, %d k neigbours: %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used_total);
   #endif
+  #endif
+  
+
   #if EVALUATE
   for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
     printf("k: %d, accuracy: %.4f\n", k, evaluate_knn(k, &generic_dataset));
