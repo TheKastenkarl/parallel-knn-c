@@ -75,45 +75,33 @@ TEST compare_very_different_int_positive (void) {
 /* A test runs various assertions, then calls PASS(), FAIL(), or SKIP(). */
 TEST distance_3_dimensions(void) {
   float array1[3] = {2.0, 2.0, 2.0};
-  Comparison_Point point1 = {array1, NULL};
-
   float array2[3] = {5.0, 5.0, 5.0};
-  Point point2 = {array2, 0};
 
-  ASSERT_IN_RANGE(5.1962, point_distance(point1, point2, 3), FLOAT_TOLERANCE);
+  ASSERT_IN_RANGE(5.1962, point_distance(array1, array2, 3), FLOAT_TOLERANCE);
   PASS();
 }
 
 TEST distance_10_dimensions(void) {
   float array1[10] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
-  Comparison_Point point1 = {array1, NULL};
-
   float array2[10] = {10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0};
-  Point point2 = {array2, 0};
 
-  ASSERT_IN_RANGE(28.4605, point_distance(point1, point2, 10), FLOAT_TOLERANCE);
+  ASSERT_IN_RANGE(28.4605, point_distance(array1, array2, 10), FLOAT_TOLERANCE);
   PASS();
 }
 
 TEST distance_1_dimension(void) {
   float array1[1] = {3.0};
-  Comparison_Point point1 = {array1, NULL};
-
   float array2[1] = {6.0};
-  Point point2 = {array2, 0};
 
-  ASSERT_IN_RANGE(3.0, point_distance(point1, point2, 1), FLOAT_TOLERANCE);
+  ASSERT_IN_RANGE(3.0, point_distance(array1, array2, 1), FLOAT_TOLERANCE);
   PASS();
 }
 
 TEST distance_1_dimension_fraction(void) {
   float array1[1] = {3.0};
-  Comparison_Point point1 = {array1, NULL};
-
   float array2[1] = {3.5};
-  Point point2 = {array2, 0};
 
-  ASSERT_IN_RANGE(0.5, point_distance(point1, point2, 1), FLOAT_TOLERANCE);
+  ASSERT_IN_RANGE(0.5, point_distance(array1, array2, 1), FLOAT_TOLERANCE);
   PASS();
 }
 
@@ -123,68 +111,165 @@ TEST distance_1_dimension_fraction(void) {
 //taking one point and a dataset
 //We need a distance associated with a point
 
-//Test k NN search
-//Ensure that the returned array contains the correct integers
+// Test k NN search
+// Ensure that the returned array contains the correct integers
 
-//Test the nearest 1 neighbour can be found
+// Test the nearest 1 neighbour can be found
 TEST find_1_nearest_neighbour(void) {
+  // Setup
   int k = 1;
 
+  // Create dataset with a single 1D point
   int category = 0;
-  //Pass it the stuff it needs, the dataset,
-  float dimensions[] = {5};
-  Point point1 = {dimensions, category};
+  float point[] = {5};
+  Dataset single_point_dataset(1, 1);
+  single_point_dataset.points = (float*) malloc(single_point_dataset.num_points * single_point_dataset.num_dimensions * sizeof(float));
+  single_point_dataset.categories = (int*) malloc(single_point_dataset.num_points * sizeof(int));
+  single_point_dataset.set_point(0, point);
+  single_point_dataset.categories[0] = category;
 
-  //Since we've only got a length of 1, just use a pointer straight to the single point
-  Point* points = &point1;
-  Dataset single_point_dataset = {1, 1, points};
+  // Create one query point
+  float query_point[] = {3};
+  Query_Points query_points(false, 1, 1, 1);
+  query_points.set_query_point(0, query_point);
 
-  float comparison_dimensions[] = {3};
-  //TODO, fix the comparison point category
-  Comparison_Point compare = {comparison_dimensions, NULL};
+  // One point to compare to the rest
+  ASSERT_EQ(category, knn_search(k, &query_points, &single_point_dataset));
 
-  //One point to compare to the rest
-  ASSERT_EQ(category, knn_search(k, compare, &single_point_dataset));
-  free(compare.neighbour);
+  free(single_point_dataset.points);
+  free(single_point_dataset.categories);
+  free(query_points.points);
+  free(query_points.neighbor_idx);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+
   PASS();
 }
 
+TEST find_1_nearest_neighbour_parallel(void) {
+  // Setup
+  int k = 1;
 
-//One dimensional, 5 point dataset, find average of k=3 neighbours
-//Test the code can handle updating 3 of the 5 without having to update a distance
+  // Create dataset with a single 1D point
+  int category = 0;
+  float point[] = {5};
+  Dataset single_point_dataset(1, 1);
+  single_point_dataset.points = (float*) malloc(single_point_dataset.num_points * single_point_dataset.num_dimensions * sizeof(float));
+  single_point_dataset.categories = (int*) malloc(single_point_dataset.num_points * sizeof(int));
+  single_point_dataset.set_point(0, point);
+  single_point_dataset.categories[0] = category;
+
+  // Create one query point
+  float query_point[] = {3};
+  Query_Points query_points(false, 1, 1, 1);
+  query_points.set_query_point(0, query_point);
+
+  // One point to compare to the rest
+  ASSERT_EQ(category, knn_search_parallel(k, &query_points, &single_point_dataset)[0]);
+
+  free(single_point_dataset.points);
+  free(single_point_dataset.categories);
+  free(query_points.points);
+  free(query_points.neighbor_idx);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+
+  PASS();
+}
+
+// One dimensional, 5 point dataset, find average of k=3 neighbours
+// Test the code can handle updating 3 of the 5 without having to update a distance
 TEST find_3_nearest_neighbour(void) {
-  //Setup
+  // Setup
   int k = 3;
 
-  //Pass it the stuff it needs, the dataset,
-  float dimensions0[] = {5.0};
-  Point point0 = {dimensions0, 0};
+  // Create dataset with 5x 1D points
+  Dataset point_dataset(1, 5);
+  point_dataset.points = (float*) malloc(point_dataset.num_points * point_dataset.num_dimensions * sizeof(float));
+  point_dataset.categories = (int*) malloc(point_dataset.num_points * sizeof(int));
 
-  float dimensions1[] = {6.0};
-  Point point1 = {dimensions1, 1};
+  float point0[] = {5.0};
+  point_dataset.set_point(0, point0);
+  point_dataset.categories[0] = 0;
 
-  float dimensions2[] = {7.0};
-  Point point2 = {dimensions2, 1};
+  float point1[] = {6.0};
+  point_dataset.set_point(1, point1);
+  point_dataset.categories[1] = 1;
 
-  float dimensions3[] = {0.0};
-  Point point3 = {dimensions3, 0};
+  float point2[] = {7.0};
+  point_dataset.set_point(2, point2);
+  point_dataset.categories[2] = 1;
 
-  float dimensions4[] = {-1.0};
-  Point point4 = {dimensions4, 0};
+  float point3[] = {0.0};
+  point_dataset.set_point(3, point3);
+  point_dataset.categories[3] = 0;
 
-  //Since we've only got a length of 1, just use a pointer straight to the single point
-  Point points[5] = {point0, point1, point2, point3, point4};
-  Dataset point_dataset = {1, 5, points};
+  float point4[] = {-1.0};
+  point_dataset.set_point(4, point4);
+  point_dataset.categories[4] = 0;
 
-  float comparison_dimensions[] = {6.5};
-  //TODO, fix the comparison point category
-  Comparison_Point compare = {comparison_dimensions, NULL};
+  // Create one query point
+  float query_point[] = {6.5};
+  Query_Points query_points(false, 1, 1, 1);
+  query_points.set_query_point(0, query_point);
 
-  int category = knn_search(k, compare, &point_dataset);
-  free(compare.neighbour);
+  // One point to compare to the rest
+  ASSERT_EQ(1, knn_search(k, &query_points, &point_dataset));
 
-  //One point to compare to the rest
-  ASSERT_EQ(1, category);
+  free(point_dataset.points);
+  free(point_dataset.categories);
+  free(query_points.points);
+  free(query_points.neighbor_idx);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+
+  PASS();
+}
+
+TEST find_3_nearest_neighbour_parallel(void) {
+  // Setup
+  int k = 3;
+
+  // Create dataset with 5x 1D points
+  Dataset point_dataset(1, 5);
+  point_dataset.points = (float*) malloc(point_dataset.num_points * point_dataset.num_dimensions * sizeof(float));
+  point_dataset.categories = (int*) malloc(point_dataset.num_points * sizeof(int));
+
+  float point0[] = {5.0};
+  point_dataset.set_point(0, point0);
+  point_dataset.categories[0] = 0;
+
+  float point1[] = {6.0};
+  point_dataset.set_point(1, point1);
+  point_dataset.categories[1] = 1;
+
+  float point2[] = {7.0};
+  point_dataset.set_point(2, point2);
+  point_dataset.categories[2] = 1;
+
+  float point3[] = {0.0};
+  point_dataset.set_point(3, point3);
+  point_dataset.categories[3] = 0;
+
+  float point4[] = {-1.0};
+  point_dataset.set_point(4, point4);
+  point_dataset.categories[4] = 0;
+
+  // Create one query point
+  float query_point[] = {6.5};
+  Query_Points query_points(false, 1, 1, 1);
+  query_points.set_query_point(0, query_point);
+
+  // One point to compare to the rest
+  ASSERT_EQ(1, knn_search_parallel(k, &query_points, &point_dataset)[0]);
+
+  free(point_dataset.points);
+  free(point_dataset.categories);
+  free(query_points.points);
+  free(query_points.neighbor_idx);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+
   PASS();
 }
 
@@ -194,7 +279,7 @@ TEST classify_int(void) {
 
   //Using only the minimum 1 categories
   Classifier_List flower_map;
-  flower_map.categories = (my_string*)malloc(sizeof(my_string));
+  flower_map.categories = (my_string*) malloc(sizeof(my_string));
 
   strcpy(flower_map.categories[0].str, "Iris");
 
@@ -307,43 +392,54 @@ TEST create_new_category(void) {
 }
 
 TEST knn_accuracy(void) {
-  //Comments step through the expected classification of the knn
-  //for each point removed and then consider the percentage correct for that k
-  //In this case k=3
+  // Comments step through the expected classification of the knn
+  // for each point removed and then consider the percentage correct for that k
+  // In this case k=3
 
-  float dimensions0[] = {5.0};
-  Point point0 = {dimensions0, 0};
+  // Create dataset with 5x 1D points
+  Dataset test_dataset(1, 5);
+  test_dataset.points = (float*) malloc(test_dataset.num_points * test_dataset.num_dimensions * sizeof(float));
+  test_dataset.categories = (int*) malloc(test_dataset.num_points * sizeof(int));
+
+  float point0[] = {5.0};
+  test_dataset.set_point(0, point0);
+  test_dataset.categories[0] = 0;
   //Classed 1
   //Incorrect
 
-  float dimensions1[] = {6.0};
-  Point point1 = {dimensions1, 1};
+  float point1[] = {6.0};
+  test_dataset.set_point(1, point1);
+  test_dataset.categories[1] = 1;
   //Classed 0
   //Incorrect
 
-  float dimensions2[] = {7.0};
-  Point point2 = {dimensions2, 1};
+  float point2[] = {7.0};
+  test_dataset.set_point(2, point2);
+  test_dataset.categories[2] = 1;
   //Classed 0
   //Incorrect
 
-  float dimensions3[] = {0.0};
-  Point point3 = {dimensions3, 0};
+  float point3[] = {0.0};
+  test_dataset.set_point(3, point3);
+  test_dataset.categories[3] = 0;
   //Classed 0
   //Correct
 
-  float dimensions4[] = {-1.0};
-  Point point4 = {dimensions4, 0};
+  float point4[] = {-1.0};
+  test_dataset.set_point(4, point4);
+  test_dataset.categories[4] = 0;
   //Classed 0
-  //correct
+  //Correct
 
   //Count is 2
   // 2/5=0.4
 
-  Point points[5] = {point0, point1, point2, point3, point4};
-  Dataset test_dataset = {1, 5, points};
   evaluate_knn(3, &test_dataset);
-
   ASSERT_IN_RANGE(0.4, evaluate_knn(3, &test_dataset), FLOAT_TOLERANCE);
+
+  free(test_dataset.points);
+  free(test_dataset.categories);
+
   PASS();
 }
 
@@ -369,7 +465,9 @@ SUITE(external_suite) {
     RUN_TEST(compare_very_different_int_negative);
 
     RUN_TEST(find_1_nearest_neighbour);
+    RUN_TEST(find_1_nearest_neighbour_parallel);
     RUN_TEST(find_3_nearest_neighbour);
+    RUN_TEST(find_3_nearest_neighbour_parallel);
 
     RUN_TEST(extract_field_1);
     RUN_TEST(extract_field_4);
