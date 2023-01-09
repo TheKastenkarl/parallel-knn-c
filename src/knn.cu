@@ -3,9 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
-#include <assert.h>
 #include <float.h>
-
 #include <time.h>
 
 #include "greatest.h"
@@ -13,15 +11,18 @@
 
 #include "nvtx3.hpp"
 
-#define EVALUATE 0  // Choose between evaluation mode (1) and user mode (0)
+#define EVALUATE 0  // Choose between evaluation mode (1) and profiling mode (0)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
-#define TIMER 0     // define whether you want to measure and print the execution time of certain functions
-#define NUMNEIGHBOURS 5 // define number of knearest neighbours that are checked for the classification (only used if evaluation mode is 0, i.e. user mode is activated)
+
+// PROFILING
+#define TIMER 1     // define whether you want to measure and print the execution time of certain functions
+#define NUMNEIGHBOURS 3 // define number of knearest neighbours that are checked for the classification (only used if evaluation mode is 0, i.e. user mode is activated)
 #define MULTIPLEQUERYPOINTS 1 // define whether you want to execute the knn search for multiple query points (1) or for a single point (0)
 #define NUMQUERYPOINTS 30 // define number of query points you want to try (only relevant if MULTIPLEQUERYPOINTS is set to 1)
-
 #define SEED 10 // seed for random point generation
+//#define PROFILING_DATASET "./datasets/huge_data.csv"
+#define PROFILING_DATASET "./datasets/huge_data.csv"
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
@@ -104,7 +105,7 @@ int compare_int(const void *v1, const void *v2) {
 // Find the most frequent element in a C array (https://www.geeksforgeeks.org/frequent-element-array/)
 __host__ __device__ int most_frequent(int* arr, const int n) {
   int maxcount = 0;
-  int element_having_max_freq;
+  int element_having_max_freq = -1;
   for (int i = 0; i < n; ++i) {
     int count = 0;
     for (int j = 0; j < n; ++j) {
@@ -272,11 +273,11 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
   // Check if the calculated distance in this thread belongs to the local k nearest neighbors and if yes,
   // add the corresponding point to the array storing the local k nearest neighbors
   if (rank_distance < k) {
-    Point_Neighbour_Relationship* local_nearest_neighbor = &(local_knns[k * blockDim.x * blockIdx.y + k * blockIdx.x + rank_distance]); // store the local knns for each query point sequentially
+    Point_Neighbour_Relationship* local_nearest_neighbor = &(local_knns[k * gridDim.x * id_cpoint + k * blockIdx.x + rank_distance]); // store the local knns for each query point sequentially
     local_nearest_neighbor->neighbour_pointer = &(datapoints->points[id_datapoint]);
     local_nearest_neighbor->distance = distance;
     #if DEBUG
-    printf("[DEBUG] local_knns[%d].distance = %.4f \t id_datapoint = %d \t Category: %d \t id_cpoint = %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, id_datapoint, local_nearest_neighbor->neighbour_pointer->category, id_cpoint);
+    printf("[DEBUG] local_knns[%d].distance = %.4f \t id_datapoint = %d \t Category: %d \t id_cpoint = %d\n", k * gridDim.x * id_cpoint + k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, id_datapoint, local_nearest_neighbor->neighbour_pointer->category, id_cpoint);
     #endif
   }
 }
@@ -514,7 +515,7 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
 
   // Initialize the grid and block dimensions and calculate the local k nearest neighbors
   // Use 2D block and thread grid: x - dimension of the dataset points, y - dimension of the query points
-  const int blockDimY_local_knn = (datapoints->num_points + TPB_LOCAL_KNN_Y - 1) / TPB_LOCAL_KNN_Y;
+  const int blockDimY_local_knn = (num_cpoints + TPB_LOCAL_KNN_Y - 1) / TPB_LOCAL_KNN_Y;
   const int blockDimX_local_knn = (datapoints->num_points + TPB_LOCAL_KNN_X - 1) / TPB_LOCAL_KNN_X;
   int smem_size = TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y * sizeof(float);
   cudaMalloc(&local_knns_device, num_cpoints * k * blockDimX_local_knn * sizeof(Point_Neighbour_Relationship));
@@ -538,7 +539,7 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
   }
   nvtxRangePop();
 
-  // Free the GPU memory
+ // Free the GPU memory
   cudaFree(cpoints_device);
   for (int i = 0; i < num_cpoints; ++i) {
     cudaFree(cpoint_dimensions_device[i]);
@@ -703,7 +704,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
   //Struct should contain a 2d array with the lines, in each with data separated into array elements
   char *buffer;
   buffer = (char*) malloc(sizeof(char) * 1024);
-  fscanf(file, "%s\n", buffer);
+  (void)! fscanf(file, "%s\n", buffer);
 
   //Count the commas
   int num_dimensions = count_fields(buffer) - 1;
@@ -724,7 +725,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
     i++;
     //Don't do this on the last iteration of the loop
     if (!(i == num_lines)) {
-      fscanf(file, "%s\n", buffer);
+      (void)! fscanf(file, "%s\n", buffer);
       strcpy(buffer_string.str, buffer);
     }
   } while (i < num_lines);
@@ -806,9 +807,6 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
       sum_correct++;
     }
     #endif
-    #if DEBUG
-    printf("[DEBUG] Actual class: %d\n", benchmark_dataset->points[i].category);
-    #endif
   }
 
   accuracy = (float) sum_correct / (float) benchmark_dataset->num_points;
@@ -819,7 +817,7 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("Time used for %d k neigbours: %f \n", k, time_used);
+  printf("Time used for k = %d neigbors: %f \n", k, time_used);
   #endif
 
   return accuracy;
@@ -848,7 +846,7 @@ int main (int argc, char **argv) {
   Classifier_List class_list = new_classifier_list();
 
   my_string filename;
-  strcpy(filename.str, "/content/drive/MyDrive/Colab Notebooks/AppliedGPU_finalProject/datasets/huge_data.csv"); 
+  strcpy(filename.str, PROFILING_DATASET); 
 
   //This is in user mode:
 
@@ -885,19 +883,23 @@ int main (int argc, char **argv) {
 
     Comparison_Point comparisonPoints[NUMQUERYPOINTS];
 
-    for (int i = 0; i < NUMQUERYPOINTS; i++){
+    for (int i = 0; i < NUMQUERYPOINTS; i++) {
       for (int j = 0; j < num_dimensions; j++) {
       
-        compare.dimension[j] = j * (rand() % 20);
+        compare.dimension[j] = rand() % 20;
       }
       comparisonPoints[i] = compare;
+      #if DEBUG
+      Point cpoint = {compare.dimension, -1};
+      printf("[DEBUG] Query point %d: ", i);
+      print_point(&cpoint, num_dimensions);
+      #endif
     }
 
-
-    int* cpoint_classes= knn_search_parallel(k, comparisonPoints, NUMQUERYPOINTS, &generic_dataset);
+    int* cpoint_classes = knn_search_parallel(k, comparisonPoints, NUMQUERYPOINTS, &generic_dataset);
 
     int category;
-    for (int i = 0; i < NUMQUERYPOINTS; i++){
+    for (int i = 0; i < NUMQUERYPOINTS; ++i) {
       category = cpoint_classes[i];
       my_string class_string = classify(class_list, category);
       printf("Point number %d classified as: %s\n", i, class_string.str);
@@ -908,7 +910,7 @@ int main (int argc, char **argv) {
     #if TIMER
     end = clock();
     time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d query points, %d k neigbours: %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used);
+    printf("Time used for %d query points (k = %d neigbors): %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used);
     #endif
 
     #else
@@ -922,7 +924,7 @@ int main (int argc, char **argv) {
     #if TIMER
     end = clock();
     time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d k neigbours: %f \n", k, time_used);
+    printf("Time used for k = %d neigbors: %f \n", k, time_used);
     #endif
 
     #endif
@@ -944,7 +946,7 @@ int main (int argc, char **argv) {
   #if TIMER
   end_total = clock();
   time_used_total = ((double) (end_total - start_total)) / CLOCKS_PER_SEC;
-  printf("Total time used for %d query points, %d k neigbours: %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used_total);
+  printf("Total time used for %d query points (k = %d neigbors): %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used_total);
   #endif
   #endif
   
