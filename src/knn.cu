@@ -195,14 +195,14 @@ int* knn_search(const int k, Query_Points* query_points, Dataset* dataset) {
 
     // For the first k points, just add whatever junk into the array. This way we can just update the largest.
     for (int id = 0; id < k; ++id) {
-      float distance = point_distance(query_points->get_point(0), dataset->get_point(id), dataset->num_dimensions);
+      float distance = point_distance(query_points->get_point(j), dataset->get_point(id), dataset->num_dimensions);
       query_points->neighbor_distances[id] = distance;
       query_points->neighbor_idx[id] = id;
     }
 
     // Get the euclidean distance to every neighbour,
     for (int id = k; id < dataset->num_points; ++id) {
-      float distance = point_distance(query_points->get_point(0), dataset->get_point(id), dataset->num_dimensions);
+      float distance = point_distance(query_points->get_point(j), dataset->get_point(id), dataset->num_dimensions);
 
       #if DEBUG
       printf("[DEBUG] Point distance: %.4f\n", distance);
