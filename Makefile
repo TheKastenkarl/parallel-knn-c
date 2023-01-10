@@ -1,11 +1,15 @@
 # From https://x.momo86.net/?p=29
 CXX=g++
-CXXFLAGS=-std=c++11 -I./include -O2 -g -G -Xcompiler -Wall -lm
+#cxx flags for compiling
+CXXFLAGS=-std=c++11 -I./include -O2 -g -G -Xcompiler -Wall -lm # add -pg flag for gprof profiling
 
 NVCC=nvcc
+# specify required architecture. E.g. for google colab Tesla T4: sm_75
 ARCH=sm_75
-NVCCFLAGS=-I./include -arch=$(ARCH) -std=c++11 -O2 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm -lnvToolsExt
+# nvcc flags for compiling. -lnvToolsExt is added for linking the nvidia library nvtx3
+NVCCFLAGS=-I./include -arch=$(ARCH) -std=c++11 -O2 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm -lnvToolsExt # add -pg flag for gprof profiling
 
+# specify directories and relevant files
 SRCDIR:=src
 SRCS=$(shell find $(SRCDIR) -name '*.cu' -o -name '*.cpp')
 
@@ -51,6 +55,7 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	[ -d $(OBJDIR) ] || mkdir $(OBJDIR)
 	$(NVCC) $(CXXFLAGS) $< -c -o $@
 
+# "make clean" should remove all outputs of "make all"
 clean:
 	rm -rf $(OBJS)
 	rm -rf $(BIN)/$(TARGET)

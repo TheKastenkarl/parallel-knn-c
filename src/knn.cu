@@ -21,6 +21,8 @@
 #define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 93 with a value of 64 due to max. shared memory size)
 
 #define SEED 10     // Seed to allow better comparison between different runs during which randomness is involved
+#define MAX_RANDOM_VALUE 25 // query point values can be created manually. The range is between 0 and the here defined value of MAX_RANDOM_VALUE. Please note that this function is intended to be used for easy profiling with a lot of query points. 
+#define MAX_K 99 // define a maximum k value up to which the evaluation mode evaluates a dataset (please note that the evaluation stops earlier if the dataset contains less data points than the here specified k)
 
 // Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -132,10 +134,11 @@ public:
 
   // Randomly generate a query point and add it to the 'points' array at the position 'qpoint_id'.
   // Corresponding array entries in member variable 'points' have to be allocated before calling this method.
+  //  Please note that this function is intended to be used for easy profiling with a lot of query points. 
   __host__ void generate_random_query_point(const int qpoint_id) {
     float* point = this->get_point(qpoint_id);
     for (int i = 0; i < this->num_dimensions; ++i) { 
-      point[i] = rand() % 25;
+      point[i] = rand() % MAX_RANDOM_VALUE;
       #if DEBUG
       printf("Query point ID %d: %dth dimension value is: %f", qpoint_id, i, point[i]);
       #endif
@@ -505,13 +508,16 @@ __global__ void determine_majority_classes_parallel(const int k, Query_Points* q
  * @param dataset Dataset containing the data points.
  */
 __host__ void determine_majority_classes(const int k, Query_Points* query_points, Dataset const* dataset) {
+  // loop over the number of query points and calculate all neighbour categories for each of them
   for (int i = 0; i < query_points->num_points; ++i) {
     // Store the categories of the global k nearest neighbors in an array
     int neighbor_categories[k];
+    // loop over the k nearest neighbours and store their categories
     for (int c = 0; c < k; c++) {
       int point_id = query_points->neighbor_ids[i * k + c];
       neighbor_categories[c] = dataset->categories[point_id];
     }
+    // determine the most frequent category of the k nearest neighbours, i.e. determine which class the query point belongs to
     query_points->qpoint_categories[i] = most_frequent(neighbor_categories, k);
     #if DEBUG
     printf("[DEBUG] Predicted category = %d \t id_qpoint = %d\n", query_points->qpoint_categories[i], i);
@@ -927,6 +933,7 @@ float evaluate_knn(const int k, Dataset* benchmark_dataset) {
     printf("[DEBUG] Actual category: %d\n", benchmark_dataset->categories[i]);
     #endif
 
+    // free the memory
     free(query_point.points);
     free(query_point.neighbor_ids);
     free(query_point.neighbor_distances);
@@ -977,20 +984,29 @@ int main (int argc, char** argv) {
 
   #if !EVALUATE
 
+  // read number of neighbours k from the user (terminal interaction)
   int k = read_integer("Please put the desired number of neighbours k for the knn-search: ");
 
+  // read number of query points from the user (terminal interaction). Default value is 1
   int num_query_points = 1;
   num_query_points = read_integer("How many query points do you want to enter? ");
-  bool query_points_manually = read_boolean("Do you want to enter the query points manually? (yes/no) If no, the query points will be chosen randomly. ");
+
+  // read from the user (terminal interaction) whether the user wants to specify all the query points manually or whether they should be created randomly
+  // If created randomly, 
+  bool query_points_manually = read_boolean("Do you want to enter the query points manually? (yes/no) If no, the query points will be chosen randomly (e.g. for performance measurement purposes with a lot of query points). ");
   
+  // initialize instance of Query_Points (including allocation of required memory for the specified number of query points)
   Query_Points query_points(false, generic_dataset.num_dimensions, num_query_points, k);
 
   // Loop to create the number of required query points
   for (int i = 0; i < num_query_points; ++i) {
+    // if manual query point creation is selected, the user is asked for every query point which value each dimension should have
     if (query_points_manually) {
       printf("Point %d:\n", i);
       query_points.read_query_point_user(i);
     } else {
+      // random generation of query points (values for all dimensions vary between 0 and MAX_RANDOM_VALUE [#define directive])
+      //  Please note that this function is intended to be used for easy profiling with a lot of query points. 
       query_points.generate_random_query_point(i);
     }
   }
@@ -1005,6 +1021,8 @@ int main (int argc, char** argv) {
 
   
   nvtxRangePush("main - knn_search_parallel (parallel)");
+  // perform kNN algorithm in parallel manner with all query points
+  // stores categories of all query points in qpoint_categories
   int* qpoint_categories = knn_search_parallel(k, &query_points, &generic_dataset);
   nvtxRangePop();
 
@@ -1021,9 +1039,13 @@ int main (int argc, char** argv) {
   double time_used;
   start = clock();
   #endif
+
   nvtxRangePush("main - knn_search (sequential)");
+  // perform kNN algorithm in sequential manner with all query points
+  // stores categories of all query points in qpoint_categories
   int* qpoint_categories = knn_search(k, &query_points, &generic_dataset);
   nvtxRangePop();
+
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
@@ -1032,11 +1054,13 @@ int main (int argc, char** argv) {
 
   #endif
 
+  // print the classes of all query points
   for (int j = 0; j < num_query_points; ++j) {
     my_string class_string = classify(class_list, qpoint_categories[j]);
     printf("Query point ID %d classified as: %s\n", j, class_string.str);
   }
 
+  // free memory
   free(query_points.points);
   free(query_points.neighbor_ids);
   free(query_points.neighbor_distances);
@@ -1045,7 +1069,12 @@ int main (int argc, char** argv) {
   #endif
 
   #if EVALUATE
-  for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
+  // evaluate for which k yields the best performance for this dataset 
+  //(accuracy is determined and printed for every odd k value from 1 up to K_MAX or the number of points in the dataset - 1 )
+
+  int max_k = min(MAX_K, generic_dataset.num_points);
+
+  for (int k = 1; k < max_k; k = k + 2) {
     printf("k: %d, accuracy: %.4f\n", k, evaluate_knn(k, &generic_dataset));
     #if DEBUG
     printf("++++++++++++++++++++++++++++++++++++++++++++\n\n");
