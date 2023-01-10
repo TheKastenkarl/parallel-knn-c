@@ -8,7 +8,6 @@
 
 #include "greatest.h"
 #include "terminal_user_input.h"
-
 #include "nvtx3.hpp"
 
 #define EVALUATE 0  // Choose between evaluation mode (1) and profiling mode (0)
@@ -21,12 +20,11 @@
 #define MULTIPLEQUERYPOINTS 1 // define whether you want to execute the knn search for multiple query points (1) or for a single point (0)
 #define NUMQUERYPOINTS 30 // define number of query points you want to try (only relevant if MULTIPLEQUERYPOINTS is set to 1)
 #define SEED 10 // seed for random point generation
-//#define PROFILING_DATASET "./datasets/huge_data.csv"
 #define PROFILING_DATASET "./datasets/huge_data.csv"
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
-#define TPB_GLOBAL_KNN 32   // Threads per block for calculating the global k nearest neighbors and determining the class
+#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -248,7 +246,7 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
     distance = point_distance(cpoints[id_cpoint], datapoints->points[id_datapoint], datapoints->dimensionality);
   }
   
-  s_distances[threadIdx.x] = distance;
+  s_distances[threadIdx.y * blockDim.x + threadIdx.x] = distance;
   __syncthreads();
 
   // Determine the local k nearest neighbors
@@ -256,9 +254,9 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
   // query point of all datapoints considered in this thread block.
   int rank_distance = 0;
   for (int i = 0; i < blockDim.x; ++i) {
-    if (distance > s_distances[i]) {
+    if (distance > s_distances[threadIdx.y * blockDim.x + i]) {
         ++rank_distance;
-    } else if ((distance == s_distances[i]) && (threadIdx.x > i)) {
+    } else if ((distance == s_distances[threadIdx.y * blockDim.x + i]) && (threadIdx.x > i)) {
         // Handle the case when 2 samples have the same distance
         // -> Only for one of the samples the rank should be increased
         // -> Here: Only increase the rank of the sample with the higher index should be increased
