@@ -2,7 +2,7 @@ Parallel k-Nearest-Neighbour implementation in CUDA C/C++
 =========================================
 
 Uses the following code:
-
+- Based on the sequential knn code by [cdilga](https://github.com/cdilga/knn-c).
 - `greatest.h` for unit testing. Check it out [on github](https://github.com/silentbicycle/greatest).
 - Test Dataset sourced from
     - UCI Machine Learning Repository - [Iris Dataset](https://archive.ics.uci.edu/ml/datasets/iris)
@@ -19,6 +19,8 @@ After starting the program, you are asked to specify the dataset (e.g. `datasets
 ```console
 make clean
 ```
+
+The code is developed and tested only on Linux.
 
 ## Switch between sequential code and parallel CUDA version
 By setting `#define CUDA 1` in `knn.cu` you can define that the parallel CUDA version of the knn algorithm should be used. When you set `#define CUDA 0` the sequential version is used.
