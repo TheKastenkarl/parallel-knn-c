@@ -13,7 +13,7 @@ my_string read_string(const char* prompt)
 {
   my_string result;     // declares a "my_string" variable (contains the array of character)
   printf("%s", prompt); // output the string from the prompt "%s" defines where to place the string in the output
-  scanf(" %255[^\n]%*c", result.str ); // scan the input looking for upto 255 characters [ that are not newlines ], read this into the string variable
+  (void)! scanf(" %255[^\n]%*c", result.str ); // scan the input looking for upto 255 characters [ that are not newlines ], read this into the string variable
   return result; // return the my string value
 }
 

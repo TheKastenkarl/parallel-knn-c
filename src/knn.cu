@@ -3,10 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
-#include <assert.h>
 #include <float.h>
-#include <thrust/sort.h>
-#include <thrust/execution_policy.h>
 
 #include <time.h>
 
@@ -20,7 +17,7 @@
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
-#define TPB_GLOBAL_KNN 32   // Threads per block for calculating the global k nearest neighbors and determining the class
+#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -99,7 +96,7 @@ int compare_int(const void *v1, const void *v2) {
 // Find the most frequent element in a C array (https://www.geeksforgeeks.org/frequent-element-array/)
 __host__ __device__ int most_frequent(int* arr, const int n) {
   int maxcount = 0;
-  int element_having_max_freq;
+  int element_having_max_freq = -1;
   for (int i = 0; i < n; ++i) {
     int count = 0;
     for (int j = 0; j < n; ++j) {
@@ -242,7 +239,7 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
     distance = point_distance(cpoints[id_cpoint], datapoints->points[id_datapoint], datapoints->dimensionality);
   }
   
-  s_distances[threadIdx.x] = distance;
+  s_distances[threadIdx.y * blockDim.x + threadIdx.x] = distance;
   __syncthreads();
 
   // Determine the local k nearest neighbors
@@ -250,9 +247,9 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
   // query point of all datapoints considered in this thread block.
   int rank_distance = 0;
   for (int i = 0; i < blockDim.x; ++i) {
-    if (distance > s_distances[i]) {
+    if (distance > s_distances[threadIdx.y * blockDim.x + i]) {
         ++rank_distance;
-    } else if ((distance == s_distances[i]) && (threadIdx.x > i)) {
+    } else if ((distance == s_distances[threadIdx.y * blockDim.x + i]) && (threadIdx.x > i)) {
         // Handle the case when 2 samples have the same distance
         // -> Only for one of the samples the rank should be increased
         // -> Here: Only increase the rank of the sample with the higher index should be increased
@@ -267,11 +264,11 @@ __global__ void calculate_local_knns(const int k, Comparison_Point cpoints[], co
   // Check if the calculated distance in this thread belongs to the local k nearest neighbors and if yes,
   // add the corresponding point to the array storing the local k nearest neighbors
   if (rank_distance < k) {
-    Point_Neighbour_Relationship* local_nearest_neighbor = &(local_knns[k * blockDim.x * blockIdx.y + k * blockIdx.x + rank_distance]); // store the local knns for each query point sequentially
+    Point_Neighbour_Relationship* local_nearest_neighbor = &(local_knns[k * gridDim.x * id_cpoint + k * blockIdx.x + rank_distance]); // store the local knns for each query point sequentially
     local_nearest_neighbor->neighbour_pointer = &(datapoints->points[id_datapoint]);
     local_nearest_neighbor->distance = distance;
     #if DEBUG
-    printf("[DEBUG] local_knns[%d].distance = %.4f \t id_datapoint = %d \t Category: %d\n", k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, id_datapoint, local_nearest_neighbor->neighbour_pointer->category);
+    printf("[DEBUG] local_knns[%d].distance = %.4f \t id_datapoint = %d \t Category: %d\n", k * gridDim.x * id_cpoint + k * blockIdx.x + rank_distance, local_nearest_neighbor->distance, id_datapoint, local_nearest_neighbor->neighbour_pointer->category);
     #endif
   }
 }
@@ -507,7 +504,7 @@ int* knn_search_parallel(int k, Comparison_Point cpoints[], const int num_cpoint
 
   // Initialize the grid and block dimensions and calculate the local k nearest neighbors
   // Use 2D block and thread grid: x - dimension of the dataset points, y - dimension of the query points
-  const int blockDimY_local_knn = (datapoints->num_points + TPB_LOCAL_KNN_Y - 1) / TPB_LOCAL_KNN_Y;
+  const int blockDimY_local_knn = (num_cpoints + TPB_LOCAL_KNN_Y - 1) / TPB_LOCAL_KNN_Y;
   const int blockDimX_local_knn = (datapoints->num_points + TPB_LOCAL_KNN_X - 1) / TPB_LOCAL_KNN_X;
   int smem_size = TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y * sizeof(float);
   cudaMalloc(&local_knns_device, num_cpoints * k * blockDimX_local_knn * sizeof(Point_Neighbour_Relationship));
@@ -695,7 +692,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
   //Struct should contain a 2d array with the lines, in each with data separated into array elements
   char *buffer;
   buffer = (char*) malloc(sizeof(char) * 1024);
-  fscanf(file, "%s\n", buffer);
+  (void)! fscanf(file, "%s\n", buffer);
 
   //Count the commas
   int num_dimensions = count_fields(buffer) - 1;
@@ -716,7 +713,7 @@ Dataset read_dataset_file(my_string filename, Classifier_List *class_list) {
     i++;
     //Don't do this on the last iteration of the loop
     if (!(i == num_lines)) {
-      fscanf(file, "%s\n", buffer);
+      (void)! fscanf(file, "%s\n", buffer);
       strcpy(buffer_string.str, buffer);
     }
   } while (i < num_lines);
