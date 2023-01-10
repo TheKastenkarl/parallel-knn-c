@@ -130,10 +130,10 @@ TEST find_1_nearest_neighbour(void) {
 
   // Create one query point
   float query_point[] = {3};
-  Query_Points query_points(false, 1, 1, 1);
+  Query_Points query_points(false, 1, 1, k);
   query_points.set_point(0, query_point);
 
-  // One point to compare to the rest
+  // Check result
   ASSERT_EQ(category, knn_search(k, &query_points, &single_point_dataset)[0]);
 
   free(single_point_dataset.points);
@@ -161,10 +161,10 @@ TEST find_1_nearest_neighbour_parallel(void) {
 
   // Create one query point
   float query_point[] = {3};
-  Query_Points query_points(false, 1, 1, 1);
+  Query_Points query_points(false, 1, 1, k);
   query_points.set_point(0, query_point);
 
-  // One point to compare to the rest
+  // Check result
   ASSERT_EQ(category, knn_search_parallel(k, &query_points, &single_point_dataset)[0]);
 
   free(single_point_dataset.points);
@@ -210,10 +210,10 @@ TEST find_3_nearest_neighbour(void) {
 
   // Create one query point
   float query_point[] = {6.5};
-  Query_Points query_points(false, 1, 1, 1);
+  Query_Points query_points(false, 1, 1, k);
   query_points.set_point(0, query_point);
 
-  // One point to compare to the rest
+  // Check result
   ASSERT_EQ(1, knn_search(k, &query_points, &point_dataset)[0]);
 
   free(point_dataset.points);
@@ -257,11 +257,113 @@ TEST find_3_nearest_neighbour_parallel(void) {
 
   // Create one query point
   float query_point[] = {6.5};
-  Query_Points query_points(false, 1, 1, 1);
+  Query_Points query_points(false, 1, 1, k);
   query_points.set_point(0, query_point);
 
-  // One point to compare to the rest
+  // Check result
   ASSERT_EQ(1, knn_search_parallel(k, &query_points, &point_dataset)[0]);
+
+  free(point_dataset.points);
+  free(point_dataset.categories);
+  free(query_points.points);
+  free(query_points.neighbor_ids);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+
+  PASS();
+}
+
+TEST find_3_nearest_neighbour_2_queries(void) {
+  // Setup
+  int k = 3;
+
+  // Create dataset with 5x 1D points
+  Dataset point_dataset(1, 5);
+  point_dataset.points = (float*) malloc(point_dataset.num_points * point_dataset.num_dimensions * sizeof(float));
+  point_dataset.categories = (int*) malloc(point_dataset.num_points * sizeof(int));
+
+  float point0[] = {5.0};
+  point_dataset.set_point(0, point0);
+  point_dataset.categories[0] = 0;
+
+  float point1[] = {6.0};
+  point_dataset.set_point(1, point1);
+  point_dataset.categories[1] = 1;
+
+  float point2[] = {7.0};
+  point_dataset.set_point(2, point2);
+  point_dataset.categories[2] = 1;
+
+  float point3[] = {0.0};
+  point_dataset.set_point(3, point3);
+  point_dataset.categories[3] = 0;
+
+  float point4[] = {-1.0};
+  point_dataset.set_point(4, point4);
+  point_dataset.categories[4] = 0;
+
+  // Create two query points
+  float query_point0[] = {-0.5};
+  float query_point1[] = {6.5};
+  Query_Points query_points(false, 1, 2, k);
+  query_points.set_point(0, query_point0);
+  query_points.set_point(1, query_point1);
+
+  // Check result
+  int* query_point_categories = knn_search(k, &query_points, &point_dataset);
+  ASSERT_EQ(0, query_point_categories[0]);
+  ASSERT_EQ(1, query_point_categories[1]);
+
+  free(point_dataset.points);
+  free(point_dataset.categories);
+  free(query_points.points);
+  free(query_points.neighbor_ids);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+
+  PASS();
+}
+
+TEST find_3_nearest_neighbour_2_queries_parallel(void) {
+  // Setup
+  int k = 3;
+
+  // Create dataset with 5x 1D points
+  Dataset point_dataset(1, 5);
+  point_dataset.points = (float*) malloc(point_dataset.num_points * point_dataset.num_dimensions * sizeof(float));
+  point_dataset.categories = (int*) malloc(point_dataset.num_points * sizeof(int));
+
+  float point0[] = {5.0};
+  point_dataset.set_point(0, point0);
+  point_dataset.categories[0] = 0;
+
+  float point1[] = {6.0};
+  point_dataset.set_point(1, point1);
+  point_dataset.categories[1] = 1;
+
+  float point2[] = {7.0};
+  point_dataset.set_point(2, point2);
+  point_dataset.categories[2] = 1;
+
+  float point3[] = {0.0};
+  point_dataset.set_point(3, point3);
+  point_dataset.categories[3] = 0;
+
+  float point4[] = {-1.0};
+  point_dataset.set_point(4, point4);
+  point_dataset.categories[4] = 0;
+
+  // Create two query points
+  float query_point0[] = {-0.5};
+  float query_point1[] = {6.5};
+  Query_Points query_points(false, 1, 2, k);
+  query_points.set_point(0, query_point0);
+  query_points.set_point(1, query_point1);
+
+  // Check result
+  int* query_point_categories = knn_search_parallel(k, &query_points, &point_dataset);
+  ASSERT_EQ(0, query_point_categories[0]);
+  ASSERT_EQ(1, query_point_categories[1]);
 
   free(point_dataset.points);
   free(point_dataset.categories);
@@ -468,6 +570,8 @@ SUITE(external_suite) {
     RUN_TEST(find_1_nearest_neighbour_parallel);
     RUN_TEST(find_3_nearest_neighbour);
     RUN_TEST(find_3_nearest_neighbour_parallel);
+    RUN_TEST(find_3_nearest_neighbour_2_queries);
+    RUN_TEST(find_3_nearest_neighbour_2_queries_parallel);
 
     RUN_TEST(extract_field_1);
     RUN_TEST(extract_field_4);
