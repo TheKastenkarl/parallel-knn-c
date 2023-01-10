@@ -8,16 +8,19 @@
 
 #include "greatest.h"
 #include "terminal_user_input.h"
+#include "nvtx3.hpp"
 
-#define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
+#define EVALUATE 0  // Choose between user mode (0) and k evaluation mode (1)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
-#define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
-#define TIMER 0     // Define whether you want to measure and print the execution time of certain functions (1) or not (0)
+#define DEBUG 1     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
+#define TIMER 1     // Define whether you want to measure and print the execution time of certain functions (1) or not (0)
 #define MAJORITY_CLASS_PARALLEL 0 // Choose if the majority class of the k nearest neighbors is determined in parallel (1) or sequentially (0)
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of data points)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
 #define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 93 with a value of 64 due to max. shared memory size)
+
+#define SEED 10     // Seed to allow better comparison between different runs during which randomness is involved
 
 // Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -117,14 +120,27 @@ public:
     }
   }
 
-  // Read a query point from the command line and add it to the 'points' array. Corresponding 
-  // array entries in member variable 'points' have to be allocated before calling this method.
-  __host__ void read_query_point_user(const int qpoint_id) {
+  // Read a query point from the command line (for manual = true) or generate it randomly (for manual = false)
+  // and add it to the 'points' array at the position 'qpoint_id'. Corresponding array entries in member
+  // variable 'points' have to be allocated before calling this method.
+  __host__ void read_query_point_user(const int qpoint_id, bool manual) {
     float* point = this->get_point(qpoint_id);
-    for (int i = 0; i < this->num_dimensions; ++i) {
+
+    if (manual) {
+      for (int i = 0; i < this->num_dimensions; ++i) {
       printf("%dth dimension: ", i);
       point[i] = read_float("");
+      }
+    } else {
+      for (int i = 0; i < this->num_dimensions; ++i) { 
+      point[i] = rand() % 25;
+      #if DEBUG
+      printf("Query point ID %d: %dth dimension value is: %f", qpoint_id, i, point[i]);
+      #endif
+      }
     }
+    
+    
   }
 
   // Returns a pointer to the point_id'th query point.
@@ -193,87 +209,89 @@ __host__ __device__ int most_frequent(int const* arr, const int len) {
  * @param dataset Dataset used to determine the classes of the query points.
  * @return Array containing the determined categories of the query points. The result is also stored in 'query_points->qpoint_categories'.
  */
-int knn_search(const int k, Query_Points* query_point, Dataset* dataset) {
-  // Warn if k is even
-  if (k % 2 == 0) {
-    printf("[WARN] Warning: %d is even. Tie cases have undefined behaviour\n", k);
-  }
-
-  #if DEBUG
-  printf("[DEBUG] k: %d\n", k);
-  #endif
-
-  // For the first k points, just add some values into the array. This way we can just update the largest in every step.
-  for (int id = 0; id < k; ++id) {
-    float distance = point_distance(query_point->get_point(0), dataset->get_point(id), dataset->num_dimensions);
-    query_point->neighbor_distances[id] = distance;
-    query_point->neighbor_ids[id] = id;
-  }
-
-  // Get the euclidean distance to every neighbor
-  for (int id = k; id < dataset->num_points; ++id) {
-    float distance = point_distance(query_point->get_point(0), dataset->get_point(id), dataset->num_dimensions);
+int* knn_search(const int k, Query_Points* query_points, Dataset* dataset) {
+  for (int j = 0; j < query_points->num_points; ++j) {
+    // Warn if k is even
+    if (k % 2 == 0) {
+      printf("[WARN] Warning: %d is even. Tie cases have undefined behaviour\n", k);
+    }
 
     #if DEBUG
-    printf("[DEBUG] Point distance: %.4f\n", distance);
+    printf("[DEBUG] k: %d\n", k);
     #endif
 
-    // If the data point is closer to the query point than the neighbor with the largest distance, replace this
-    // neighbor with the data point.
-    float max = 0.0;
-    int update_index = 0;
-    // Determine the neighbor with the largest distance which is currently marked as one of the (preliminary) k nearest neighbors
-    for (int j = 0; j < k; ++j) {
-      if (query_point->neighbor_distances[j] > max) {
-        max = query_point->neighbor_distances[j];
-        update_index = j;
+    // For the first k points, just add some values into the array. This way we can just update the largest in every step.
+    for (int id = 0; id < k; ++id) {
+      float distance = point_distance(query_points->get_point(0), dataset->get_point(id), dataset->num_dimensions);
+      query_points->neighbor_distances[id] = distance;
+      query_points->neighbor_ids[id] = id;
+    }
+
+    // Get the euclidean distance to every neighbor
+    for (int id = k; id < dataset->num_points; ++id) {
+      float distance = point_distance(query_points->get_point(0), dataset->get_point(id), dataset->num_dimensions);
+
+      #if DEBUG
+      printf("[DEBUG] Point distance: %.4f\n", distance);
+      #endif
+
+      // If the data point is closer to the query point than the neighbor with the largest distance, replace this
+      // neighbor with the data point.
+      float max = 0.0;
+      int update_index = 0;
+      // Determine the neighbor with the largest distance which is currently marked as one of the (preliminary) k nearest neighbors
+      for (int j = 0; j < k; ++j) {
+        if (query_points->neighbor_distances[j] > max) {
+          max = query_points->neighbor_distances[j];
+          update_index = j;
+        }
+        #if DEBUG
+        printf("[DEBUG] Distance[%d]: %.4f\n", j, query_points->neighbor_distances[j]);
+        #endif
       }
       #if DEBUG
-      printf("[DEBUG] Distance[%d]: %.4f\n", j, query_point->neighbor_distances[j]);
+      printf("[DEBUG] update_index max distance identified to be: %d at distance: %.4f\n", update_index, query_points->neighbor_distances[update_index]);
+      #endif
+
+      // If the current point distance is less than the largest recorded distance, replace the corresponding
+      // neighbor with the new data point.
+      if (query_points->neighbor_distances[update_index] > distance) {
+        // Update the distance at update_index
+        #if DEBUG
+        printf("[DEBUG] Compare neighbour[%d] = %.4f\n", update_index, distance);
+        #endif
+        query_points->neighbor_distances[update_index] = distance;
+        query_points->neighbor_ids[update_index] = id; 
+
+        #if DEBUG
+        printf("[DEBUG] category of new point: %d\n", dataset->categories[id]);
+        #endif
+      }
+      #if DEBUG
+      printf("============================================\n");
       #endif
     }
-    #if DEBUG
-    printf("[DEBUG] update_index max distance identified to be: %d at distance: %.4f\n", update_index, query_point->neighbor_distances[update_index]);
-    #endif
+    // Find the most frequent category of the global k nearest neighbors
+    // First, get all the categories of the global k nearest neighbors and put them into an array
+    int neighbour_categories[k];
 
-    // If the current point distance is less than the largest recorded distance, replace the corresponding
-    // neighbor with the new data point.
-    if (query_point->neighbor_distances[update_index] > distance) {
-      // Update the distance at update_index
-      #if DEBUG
-      printf("[DEBUG] Compare neighbor[%d] = %.4f\n", update_index, distance);
-      #endif
-      query_point->neighbor_distances[update_index] = distance;
-      query_point->neighbor_ids[update_index] = id;
+    for (int c = 0; c < k; c++) {
+      int point_id = query_points->neighbor_ids[c];
+      neighbour_categories[c] = dataset->categories[point_id];
 
       #if DEBUG
-      printf("[DEBUG] category of new point: %d\n", dataset->categories[id]);
+      printf("[DEBUG] query_points->neighbour[%d].distance: %.4f\n", c, query_points->neighbor_distances[c]);
+      printf("[DEBUG] Category[%d]: %d\n", c, neighbour_categories[c]);
       #endif
     }
+
+    // Second, find the most frequent category
+    query_points->qpoint_categories[j] = most_frequent(neighbour_categories, k);
     #if DEBUG
-    printf("============================================\n");
+    printf("[DEBUG] Determined class for query point %d: %d\n", j, query_points->qpoint_categories[j]);
     #endif
   }
-  // Find the most frequent category of the global k nearest neighbors
-  // First, get all the categories of the global k nearest neighbors and put them into an array
-  int neighbor_categories[k];
-
-  for (int c = 0; c < k; c++) {
-    int point_id = query_point->neighbor_ids[c];
-    neighbor_categories[c] = dataset->categories[point_id];
-
-    #if DEBUG
-    printf("[DEBUG] query_point->neighbor[%d].distance: %.4f\n", c, query_point->neighbor_distances[c]);
-    printf("[DEBUG] Category[%d]: %d\n", c, neighbor_categories[c]);
-    #endif
-  }
-
-  // Second, find the most frequent category
-  int category = most_frequent(neighbor_categories, k);
-  #if DEBUG
-  printf("[DEBUG] Determined class: %d\n", category);
-  #endif
-  return category;
+  return query_points->qpoint_categories;
 }
 
 /**
@@ -462,7 +480,7 @@ __global__ void determine_majority_classes_parallel(const int k, Query_Points* q
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("time for first for loop %f \n", time_used);
+  printf("[TIMER] determine_majority_classes_parallel - fill shared memory %f \n", time_used);
 
   start = clock();
   #endif
@@ -472,7 +490,7 @@ __global__ void determine_majority_classes_parallel(const int k, Query_Points* q
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("time for most frequent %f \n", time_used);
+  printf("[TIMER] determine_majority_classes_parallel -  %f \n", time_used);
   #endif
 
   #if DEBUG
@@ -643,12 +661,16 @@ int* knn_search_parallel(const int k, Query_Points* query_points, Dataset const*
   // (in parallel or sequentially). And copy the result from GPU memory to the CPU memory.
   #if MAJORITY_CLASS_PARALLEL
   smem_size = k * TPB_GLOBAL_KNN * sizeof(int);
+  nvtxRangePush("knn_search_parallel - determine_majority_classes_parallel (parallel)");
   determine_majority_classes_parallel<<<num_blocks_global_knn, TPB_GLOBAL_KNN, smem_size>>>(k, query_points_device, dataset_device);
+  nvtxRangePop();
   cudaMemcpy(query_points->neighbor_ids, query_points_neighbor_ids_device, k * query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
   cudaMemcpy(query_points->qpoint_categories, query_points_qpoint_categories_device, query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
   #else
   cudaMemcpy(query_points->neighbor_ids, query_points_neighbor_ids_device, k * query_points->num_points * sizeof(int), cudaMemcpyDeviceToHost);
+  nvtxRangePush("knn_search_parallel - determine_majority_classes (sequential)");
   determine_majority_classes(k, query_points, dataset);
+  nvtxRangePop();
   #endif
 
   // Free the GPU memory
@@ -902,7 +924,8 @@ float evaluate_knn(const int k, Dataset* benchmark_dataset) {
       sum_correct++;
     }
     #else
-    if (knn_search(k, &query_point, &comparison_dataset) == benchmark_dataset->categories[i]) {
+    int* qpoint_categories = knn_search(k, &query_point, &comparison_dataset);
+    if ( qpoint_categories[0] == benchmark_dataset->categories[i]) {
       sum_correct++;
     }
     #endif
@@ -925,7 +948,7 @@ float evaluate_knn(const int k, Dataset* benchmark_dataset) {
   #if TIMER
   end = clock();
   time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-  printf("Time used for k = %d neigbors: %f sec\n", k, time_used);
+  printf("[TIMER] evaluate_knn - execution time for k = %d neigbors: %f sec\n", k, time_used);
   #endif
 
   return accuracy;
@@ -937,7 +960,10 @@ GREATEST_MAIN_DEFS();
 #endif
 
 // This main function takes commandline arguments
-int main (int argc, char **argv) {
+int main (int argc, char** argv) {
+  // Set seed for random point generation
+  srand(SEED);
+
   // Wrapped in #ifndef so we can make a release version
   #ifndef NDEBUG
   // Setup required testing
@@ -955,59 +981,68 @@ int main (int argc, char **argv) {
   my_string filename = read_string("Filename: ");
   Dataset generic_dataset(filename, &class_list);
 
+  int k = read_integer("Please put the desired number of neighbours k for the search: ");
+
   #if !EVALUATE
-  bool another_point = true;
-  do {
-    int k = read_integer("k: ");
-    Query_Points query_points(false, generic_dataset.num_dimensions, 1, k);
-    query_points.read_query_point_user(0);
 
-    #if CUDA
+  int num_query_points = 1;
+  num_query_points = read_integer("How many query points do you want to enter?: ");
+  bool query_points_manually = read_boolean("Do you want to enter the query points manually? (yes/no) If no, the query points will be chosen randomly: ");
+  
+  Query_Points query_points(false, generic_dataset.num_dimensions, num_query_points, k);
 
-    #if TIMER
-    clock_t start, end;
-    double time_used;
-    start = clock();
-    #endif
+  // loop to create the number of required query points
+  for (int i = 0; i < num_query_points; ++i) {
+    query_points.read_query_point_user(i, query_points_manually);
+  }
 
-    int* qpoint_categories= knn_search_parallel(k, &query_points, &generic_dataset);
-    int category = qpoint_categories[0];
+  #if CUDA
 
-    #if TIMER
-    end = clock();
-    time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d k neigbours: %f \n", k, time_used);
-    #endif
+  #if TIMER
+  clock_t start, end;
+  double time_used;
+  start = clock();
+  #endif
 
-    #else
+  
+  nvtxRangePush("main - knn_search_parallel (parallel)");
+  int* qpoint_categories = knn_search_parallel(k, &query_points, &generic_dataset);
+  nvtxRangePop();
 
-    #if TIMER
-    clock_t start, end;
-    double time_used;
-    start = clock();
-    #endif
-    int category = knn_search(k, &query_points, &generic_dataset);
-    #if TIMER
-    end = clock();
-    time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d k neigbours: %f \n", k, time_used);
-    #endif
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("[TIMER] main - knn_search_parallel - execution time for %d k neigbours and %d query points: %f \n", k, num_query_points, time_used);
+  #endif
 
-    #endif
+  #else
 
-    free(query_points.points);
-    free(query_points.neighbor_ids);
-    free(query_points.neighbor_distances);
-    free(query_points.qpoint_categories);
+  #if TIMER
+  clock_t start, end;
+  double time_used;
+  start = clock();
+  #endif
+  nvtxRangePush("main - knn_search (sequential)");
+  int* qpoint_categories = knn_search(k, &query_points, &generic_dataset);
+  nvtxRangePop();
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("[TIMER] main - knn_search - execution time for %d k neigbours and %d query points: %f \n", k, num_query_points, time_used);
+  #endif
 
-    #if DEBUG
-    printf("[DEBUG] Category is: %d\n", category);
-    #endif
+  #endif
 
-    my_string class_string = classify(class_list, category);
-    printf("Point classified as: %s\n", class_string.str);
-    another_point = read_boolean("Classify another point? ");
-  } while(another_point);
+  for (int j = 0; j < num_query_points; ++j) {
+    my_string class_string = classify(class_list, qpoint_categories[j]);
+    printf("Query point ID %d classified as: %s\n", j, class_string.str);
+  }
+
+  free(query_points.points);
+  free(query_points.neighbor_ids);
+  free(query_points.neighbor_distances);
+  free(query_points.qpoint_categories);
+  
   #endif
 
   #if EVALUATE
