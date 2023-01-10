@@ -18,11 +18,14 @@
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of data points)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
-#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 93 with a value of 64 due to max. shared memory size)
+#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 187 with a value of 64 due to max. shared memory size)
 
-#define SEED 10     // Seed to allow better comparison between different runs during which randomness is involved
-#define MAX_RANDOM_VALUE 25 // query point values can be created manually. The range is between 0 and the here defined value of MAX_RANDOM_VALUE. Please note that this function is intended to be used for easy profiling with a lot of query points. 
-#define MAX_K 99 // define a maximum k value up to which the evaluation mode evaluates a dataset (please note that the evaluation stops earlier if the dataset contains less data points than the here specified k)
+// Please note: This value should be defined according to the maximum value which is possible for the shared memory size. See TPB_GLOBAL_KNN value for more details.
+#define MAX_K 187 // Define a maximum k value up to which the evaluation mode evaluates a dataset (please note that the evaluation stops earlier if the dataset contains less data points than the here specified k)
+
+#define SEED 100     // Seed to allow better comparison between different runs during which randomness is involved
+#define MAX_RANDOM_VALUE 9000 // query point values can be created manually. The range is between 0 and the here defined value of MAX_RANDOM_VALUE. Please note that this function is intended to be used for easy profiling with a lot of query points. 
+
 
 // Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -138,7 +141,7 @@ public:
   __host__ void generate_random_query_point(const int qpoint_id) {
     float* point = this->get_point(qpoint_id);
     for (int i = 0; i < this->num_dimensions; ++i) { 
-      point[i] = rand() % MAX_RANDOM_VALUE;
+      point[i] = (float) ((rand() % MAX_RANDOM_VALUE - 1) * ((float) rand() / RAND_MAX));
       #if DEBUG
       printf("Query point ID %d: %dth dimension value is: %f", qpoint_id, i, point[i]);
       #endif
@@ -545,6 +548,7 @@ __host__ __device__ void print_point(float const* point, const int category, con
 __host__ __device__ void print_dataset(Dataset* dataset) {
   printf("Dataset\nDimensionality: %d\nNumber of Points: %d\n", dataset->num_dimensions, dataset->num_points);
   for (int i = 0; i < dataset->num_points; ++i) {
+    printf("point ID = %d \t", i);
     print_point(dataset->get_point(i), dataset->categories[i], dataset->num_dimensions);
   }
 }

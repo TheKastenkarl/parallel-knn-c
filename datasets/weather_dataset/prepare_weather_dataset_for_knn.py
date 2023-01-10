@@ -27,7 +27,7 @@ relevant_column_names = ["PRECIPITAÇÃO TOTAL, HORÁRIO (mm)","PRESSAO ATMOSFER
     "VENTO, VELOCIDADE HORARIA (m/s)", "height", "station"]
 
 # sample NUMBER_OF_COLUMNS columns
-relevant_column_names[:-1] = random.sample(relevant_column_names[:-1], NUMBER_OF_COLUMNS)
+relevant_column_names[:-1] = random.sample(relevant_column_names[:-2], NUMBER_OF_COLUMNS)
 
 # read in NUMBER_OF_COLUMNS columns and NUMBER_OF_ROWS_TO_SAMPLE_FROM rows from csv file
 df = pd.read_csv(INPUT_FILE, header=0, nrows=NUMBER_OF_ROWS_TO_SAMPLE_FROM, usecols=relevant_column_names)
