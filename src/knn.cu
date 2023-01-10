@@ -469,6 +469,7 @@ __global__ void determine_majority_classes_parallel(const int k, Query_Points* q
   double time_used;
   #endif
 
+  // store categories of the k nearest neighbor of query point with ID point_id in shared memory
   for (int i = 0; i < k; ++i) {
     int point_id = query_points->neighbor_ids[id_qpoint * k + i];
     s_neighbor_categories[id_qpoint * k + i] = dataset->categories[point_id];
@@ -482,6 +483,7 @@ __global__ void determine_majority_classes_parallel(const int k, Query_Points* q
   start = clock();
   #endif
 
+  // determine the most frequent category of the neigboring points of the query point with id id_point
   query_points->qpoint_categories[id_qpoint] = most_frequent(s_neighbor_categories + k * id_qpoint, k);
 
   #if TIMER
