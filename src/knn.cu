@@ -106,7 +106,7 @@ public:
 
     if(manual){
       for (int i = 0; i < this->num_dimensions; ++i) {
-      printf("%dth dimension: ", i);
+      printf("%dQuery point ID %d: th dimension: ", qpoint_id, i);
       point[i] = read_float("");
       }
     }else{
