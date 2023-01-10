@@ -12,10 +12,10 @@ import pandas as pd
 
 # PARAMETERS:
 NUMBER_OF_ROWS_TO_SAMPLE_FROM = 1000000
-NUMBER_OF_ROWS_TO_SAMPLE = 100000 # must be smaller or equal to NUMBER_OF_ROWS_TO_SAMPLE_FROM
+NUMBER_OF_ROWS_TO_SAMPLE = 1000000 # must be smaller or equal to NUMBER_OF_ROWS_TO_SAMPLE_FROM
 NUMBER_OF_COLUMNS = 8 # all numerical columns = 18
-INPUT_FILE = "weather_south_full.csv"
-OUTPUT_FILE = "weather_south_100k.csv"
+INPUT_FILE = "weather_south_10m.csv"
+OUTPUT_FILE = "weather_south_1m.csv"
 
 # Numerical column names + class column name ("station")
 relevant_column_names = ["PRECIPITAÇÃO TOTAL, HORÁRIO (mm)","PRESSAO ATMOSFERICA AO NIVEL DA ESTACAO, HORARIA (mB)",

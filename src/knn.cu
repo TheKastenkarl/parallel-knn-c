@@ -16,8 +16,8 @@
 #define TIMER 1     // Define whether you want to measure and print the execution time of certain functions (1) or not (0)
 #define MAJORITY_CLASS_PARALLEL 0 // Choose if the majority class of the k nearest neighbors is determined in parallel (1) or sequentially (0)
 
-#define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of data points)
-#define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
+#define TPB_LOCAL_KNN_X 32 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of data points)
+#define TPB_LOCAL_KNN_Y 32   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
 #define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 187 with a value of 64 due to max. shared memory size)
 
 // Please note: This value should be defined according to the maximum value which is possible for the shared memory size. See TPB_GLOBAL_KNN value for more details.
