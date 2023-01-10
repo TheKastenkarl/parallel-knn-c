@@ -4,7 +4,7 @@ CXXFLAGS=-std=c++11 -I./include -O2 -g -G -Xcompiler -Wall -lm
 
 NVCC=nvcc
 ARCH=sm_75
-NVCCFLAGS=-I./include -arch=$(ARCH) -std=c++11 -O2 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm
+NVCCFLAGS=-I./include -arch=$(ARCH) -std=c++11 -O2 -g -G -Xcompiler -Wall --compiler-bindir=$(CXX) -lm -lnvToolsExt
 
 SRCDIR:=src
 SRCS=$(shell find $(SRCDIR) -name '*.cu' -o -name '*.cpp')
