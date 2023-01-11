@@ -10,21 +10,20 @@
 #include "terminal_user_input.h"
 #include "nvtx3.hpp"
 
-#define EVALUATE 0  // Choose between evaluation mode (1) and profiling mode (0)
+#define EVALUATE 0  // Choose between user mode (0) and k evaluation mode (1)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
+#define TIMER 0     // Define whether you want to measure and print the execution time of certain functions (1) or not (0)
 
-// PROFILING
-#define TIMER 1     // define whether you want to measure and print the execution time of certain functions
-#define NUMNEIGHBOURS 3 // define number of knearest neighbours that are checked for the classification (only used if evaluation mode is 0, i.e. user mode is activated)
-#define MULTIPLEQUERYPOINTS 1 // define whether you want to execute the knn search for multiple query points (1) or for a single point (0)
-#define NUMQUERYPOINTS 30 // define number of query points you want to try (only relevant if MULTIPLEQUERYPOINTS is set to 1)
-#define SEED 10 // seed for random point generation
-#define PROFILING_DATASET "./datasets/huge_data.csv"
+#define TPB_LOCAL_KNN_X 32 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of data points)
+#define TPB_LOCAL_KNN_Y 32   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
+#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 187 with a value of 64 due to max. shared memory size)
 
-#define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
-#define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
-#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class
+// Please note: This value should be defined according to the maximum value which is possible for the shared memory size. See TPB_GLOBAL_KNN value for more details. (not used in this version. so MAX_K can be defined as preferred)
+#define MAX_K 187 // Define a maximum k value up to which the evaluation mode evaluates a dataset (please note that the evaluation stops earlier if the dataset contains less data points than the here specified k)
+
+#define SEED 100     // Seed to allow better comparison between different runs during which randomness is involved
+#define MAX_RANDOM_VALUE 9000 // query point values can be created manually. The range is between 0 and the here defined value of MAX_RANDOM_VALUE. Please note that this function is intended to be used for easy profiling with a lot of query points. 
 
 //Define a testing suite that is external to reduce code in this file
 SUITE_EXTERN(external_suite);
@@ -59,7 +58,7 @@ typedef struct point_neighbour_relationship {
 } Point_Neighbour_Relationship;
 
 //Since a comparison point is a distinctly different entity to a data point
-typedef struct comparision_point {
+typedef struct comparison_point {
   float *dimension;
   Point_Neighbour_Relationship *neighbour;
 } Comparison_Point;
@@ -119,7 +118,6 @@ __host__ __device__ int most_frequent(int* arr, const int n) {
   return element_having_max_freq;
 }
 
-//Doing a k nearest neighbour search
 int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
   //Warn if k is even
   if (k % 2 == 0) {
@@ -205,6 +203,7 @@ int knn_search(int k, Comparison_Point compare, Dataset *datapoints) {
   #endif
   return category;
 }
+
 
 /**
  * Calculate the local k nearest neighbors (local knns) of multiple comparison points
@@ -569,6 +568,16 @@ Comparison_Point read_comparison_point_user(int num_dimensions) {
   return user_point;
 }
 
+Comparison_Point generate_random_comparison_point(int num_dimensions) {
+  Comparison_Point user_point;
+  user_point.dimension = (float*) malloc(num_dimensions*sizeof(float));
+  for (int i = 0; i < num_dimensions; i++) {
+    //printf("%dth dimension: ", i);
+    user_point.dimension[i] = (float) ((rand() % MAX_RANDOM_VALUE - 1) * ((float) rand() / RAND_MAX));
+  }
+  return user_point;
+}
+
 int count_fields(char *buffer) {
   int count = 1;
   int pos = 0;
@@ -826,145 +835,127 @@ float evaluate_knn(int k, Dataset *benchmark_dataset) {
 GREATEST_MAIN_DEFS();
 #endif
 
-//This main function takes commandline arguments
-int main (int argc, char **argv) {
-  srand(SEED); // seed
-  //Wrapped in #ifndef so we can make a release version
+// This main function takes commandline arguments
+int main (int argc, char** argv) {
+  // Set seed for random point generation
+  srand(SEED);
+
+  // Wrapped in #ifndef so we can make a release version
   #ifndef NDEBUG
-  //Setup required testing
+  // Setup required testing
     GREATEST_MAIN_BEGIN();
 
-    //Runs tests from external file specified above
+    // Runs tests from external file specified above
     RUN_SUITE(external_suite);
 
-    //Show results of the testing
+    // Show results of the testing
     GREATEST_MAIN_END();
   #endif
 
+  // Read a dataset
   Classifier_List class_list = new_classifier_list();
-
-  my_string filename;
-  strcpy(filename.str, PROFILING_DATASET); 
-
-  //This is in user mode:
-
+  my_string filename = read_string("Filename: ");
   Dataset generic_dataset = read_dataset_file(filename, &class_list);
 
   #if !EVALUATE
-  #if MULTIPLEQUERYPOINTS
-  int another_point = NUMQUERYPOINTS;
-  #else
-  int another_point = 1;
-  #endif
-  #if TIMER
-  clock_t start_total, end_total;
-  double time_used_total;
-  start_total = clock();
-  #endif
-  do {
-    Comparison_Point compare;
-    int num_dimensions = generic_dataset.dimensionality;
-    compare.dimension = (float*) malloc(num_dimensions*sizeof(float));
-    for (int i = 0; i < num_dimensions; i++) {
-      
-      compare.dimension[i] = i;
-    }
-    
-    int k = NUMNEIGHBOURS;
-    #if CUDA
-
-    #if TIMER
-    clock_t start, end;
-    double time_used;
-    start = clock();
-    #endif
-
-    Comparison_Point comparisonPoints[NUMQUERYPOINTS];
-
-    for (int i = 0; i < NUMQUERYPOINTS; i++) {
-      for (int j = 0; j < num_dimensions; j++) {
-      
-        compare.dimension[j] = rand() % 20;
-      }
-      comparisonPoints[i] = compare;
-      #if DEBUG
-      Point cpoint = {compare.dimension, -1};
-      printf("[DEBUG] Query point %d: ", i);
-      print_point(&cpoint, num_dimensions);
-      #endif
-    }
-
-    int* cpoint_classes = knn_search_parallel(k, comparisonPoints, NUMQUERYPOINTS, &generic_dataset);
-
-    int category;
-    for (int i = 0; i < NUMQUERYPOINTS; ++i) {
-      category = cpoint_classes[i];
-      my_string class_string = classify(class_list, category);
-      printf("Point number %d classified as: %s\n", i, class_string.str);
-    }
-
-    free(cpoint_classes);
-
-    #if TIMER
-    end = clock();
-    time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d query points (k = %d neigbors): %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used);
-    #endif
-
-    #else
-
-    #if TIMER
-    clock_t start, end;
-    double time_used;
-    start = clock();
-    #endif
-    int category = knn_search(k, compare, &generic_dataset);
-    #if TIMER
-    end = clock();
-    time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for k = %d neigbors: %f \n", k, time_used);
-    #endif
-
-    #endif
-    free(compare.dimension);
-    compare.dimension = NULL;
-
-    #if DEBUG
-    printf("[DEBUG] Category is: %d\n", category);
-    #endif
-    #if !CUDA
-    my_string class_string = classify(class_list, category);
-    printf("Point classified as: %s\n", class_string.str);
-    another_point--;
-    #endif
-    #if CUDA
-    another_point = 0;
-    #endif
-  } while(another_point > 0);
-  #if TIMER
-  end_total = clock();
-  time_used_total = ((double) (end_total - start_total)) / CLOCKS_PER_SEC;
-  printf("Total time used for %d query points (k = %d neigbors): %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used_total);
-  #endif
-  #endif
   
+  // read number of neighbours k from the user (terminal interaction)
+  int k = read_integer("Please put the desired number of neighbours k for the knn-search: ");
+
+  // read number of query points from the user (terminal interaction). Default value is 1
+  int num_query_points = 1;
+  num_query_points = read_integer("How many query points do you want to enter? ");
+
+  Comparison_Point query_points[num_query_points];
+
+  // read from the user (terminal interaction) whether the user wants to specify all the query points manually or whether they should be created randomly
+  // If created randomly, 
+  bool query_points_manually = read_boolean("Do you want to enter the query points manually? (yes/no) If no, the query points will be chosen randomly (e.g. for performance measurement purposes with a lot of query points). ");
+
+  // Loop to create the number of required query points
+  for (int i = 0; i < num_query_points; ++i) {
+    // if manual query point creation is selected, the user is asked for every query point which value each dimension should have
+    if (query_points_manually) {
+      printf("Point %d:\n", i);
+      query_points[i] = read_comparison_point_user(generic_dataset.dimensionality);
+    }else {
+      // random generation of query points (values for all dimensions vary between 0 and MAX_RANDOM_VALUE [#define directive])
+      //  Please note that this function is intended to be used for easy profiling with a lot of query points. 
+      query_points[i] = generate_random_comparison_point(generic_dataset.dimensionality);
+    }
+  }
+
+  #if CUDA
+
+  #if TIMER
+  clock_t start, end;
+  double time_used;
+  start = clock();
+  #endif
+
+  
+  nvtxRangePush("main - knn_search_parallel (parallel)");
+  // perform kNN algorithm in parallel manner with all query points
+  // stores categories of all query points in qpoint_categories
+  int* qpoint_categories = knn_search_parallel(k, query_points, num_query_points, &generic_dataset);
+  nvtxRangePop();
+
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("[TIMER] main - knn_search_parallel - execution time for k = %d neigbours and %d query points: %f \n", k, num_query_points, time_used);
+  #endif
+
+  #else
+  int qpoint_categories[num_query_points];
+  #if TIMER
+  clock_t start, end;
+  double time_used;
+  start = clock();
+  #endif
+
+  nvtxRangePush("main - knn_search (sequential)");
+  // perform kNN algorithm in sequential manner with all query points
+  // stores categories of all query points in qpoint_categories
+  for(int j = 0; j < num_query_points; ++j){
+    qpoint_categories[j] = knn_search(k, query_points[j], &generic_dataset);
+  }
+  nvtxRangePop();
+
+  #if TIMER
+  end = clock();
+  time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+  printf("[TIMER] main - knn_search - execution time for k = %d neigbours and %d query points: %f \n", k, num_query_points, time_used);
+  #endif
+
+  #endif
+
+  // print the classes of all query points
+  for (int j = 0; j < num_query_points; ++j) {
+    my_string class_string = classify(class_list, qpoint_categories[j]);
+    printf("Query point ID %d classified as: %s\n", j, class_string.str);
+  }
+ 
+  #endif
 
   #if EVALUATE
-  for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
+  // evaluate for which k yields the best performance for this dataset 
+  //(accuracy is determined and printed for every odd k value from 1 up to K_MAX or the number of points in the dataset - 1 )
+
+  int max_k = min(MAX_K, generic_dataset.num_points);
+
+  for (int k = 1; k < max_k; k = k + 2) {
     printf("k: %d, accuracy: %.4f\n", k, evaluate_knn(k, &generic_dataset));
     #if DEBUG
     printf("++++++++++++++++++++++++++++++++++++++++++++\n\n");
     #endif
   }
-  //for values of k up to the number of points that exist in the dataset
+  // For values of k up to the number of points that exist in the dataset
   #endif
 
-  //Free CPU memory
-  for (int i = 0; i < generic_dataset.num_points; ++i) {
-    free(generic_dataset.points[i].dimension);
-  }
-  free(generic_dataset.points);
+  // Free CPU memory
   free(class_list.categories);
+  free(generic_dataset.points);
 
   return 0;
 }
