@@ -34,7 +34,7 @@ The mode can be defined by setting either `#define EVALUATE 0` or `#define EVALU
 The datasets must be stored as CSV files. They must not have a header. The last column must contain the class of each sample. All other columns must only contain numerical data. The python script `datasets/weather_dataset/prepare_weather_dataset_for_knn.py` can be used to prepare the weather dataset for the use with this knn algorithm (e.g. by removing non-numeric columns).
 
 ## Profiling
-TBD
+TBD @Chris
 
 ## Debugging
 For debugging with small datasets it is useful to set `#define DEBUG 1` in `knn.cu`. Then you get verbose output. Furthermore, you can use the debugger [cuda-gdb](https://docs.nvidia.com/cuda/cuda-gdb/index.html) via

@@ -10,15 +10,18 @@
 #include "terminal_user_input.h"
 #include "nvtx3.hpp"
 
+// More important defines for common usage
 #define EVALUATE 0  // Choose between user mode (0) and k evaluation mode (1)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
 #define TIMER 1     // Define whether you want to measure and print the execution time of certain functions (1) or not (0)
+
+// Less important defines for common usage
 #define MAJORITY_CLASS_PARALLEL 0 // Choose if the majority class of the k nearest neighbors is determined in parallel (1) or sequentially (0)
 
 #define TPB_LOCAL_KNN_X 32 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of data points)
-#define TPB_LOCAL_KNN_Y 32   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
-#define TPB_GLOBAL_KNN 64   // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 187 with a value of 64 due to max. shared memory size)
+#define TPB_LOCAL_KNN_Y 32 // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points); Requirement: TPB_LOCAL_KNN_X * TPB_LOCAL_KNN_Y <= 1024
+#define TPB_GLOBAL_KNN 64  // Threads per block for calculating the global k nearest neighbors and determining the class (Note: max possible k = 187 with a value of 64 due to max. shared memory size. Only relevant if MAJORITY_CLASS_PARALLEL is set to 1.)
 
 // Please note: This value should be defined according to the maximum value which is possible for the shared memory size. See TPB_GLOBAL_KNN value for more details.
 #define MAX_K 187 // Define a maximum k value up to which the evaluation mode evaluates a dataset (please note that the evaluation stops earlier if the dataset contains less data points than the here specified k)
