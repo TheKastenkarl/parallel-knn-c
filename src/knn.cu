@@ -4,16 +4,23 @@
 #include <math.h>
 #include <unistd.h>
 #include <float.h>
-
 #include <time.h>
 
 #include "greatest.h"
 #include "terminal_user_input.h"
+#include "nvtx3.hpp"
 
-#define EVALUATE 1  // Choose between evaluation mode (1) and user mode (0)
+#define EVALUATE 0  // Choose between evaluation mode (1) and profiling mode (0)
 #define CUDA 1      // Choose between parallel/CUDA mode (1) and sequential mode (0)
 #define DEBUG 0     // Define the debug level. Outputs verbose output if enabled (1) and not if disabled (0)
-#define TIMER 0     // define whether you want to measure and print the execution time of certain functions
+
+// PROFILING
+#define TIMER 1     // define whether you want to measure and print the execution time of certain functions
+#define NUMNEIGHBOURS 3 // define number of knearest neighbours that are checked for the classification (only used if evaluation mode is 0, i.e. user mode is activated)
+#define MULTIPLEQUERYPOINTS 1 // define whether you want to execute the knn search for multiple query points (1) or for a single point (0)
+#define NUMQUERYPOINTS 30 // define number of query points you want to try (only relevant if MULTIPLEQUERYPOINTS is set to 1)
+#define SEED 10 // seed for random point generation
+#define PROFILING_DATASET "./datasets/huge_data.csv"
 
 #define TPB_LOCAL_KNN_X 128 // Threads per block for calculating the local k nearest neighbors (x-dim: Number of datapoints)
 #define TPB_LOCAL_KNN_Y 8   // Threads per block for calculating the local k nearest neighbors (y-dim: Number of query points)
