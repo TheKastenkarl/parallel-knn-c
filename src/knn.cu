@@ -305,12 +305,12 @@ int* knn_search(const int k, Query_Points* query_points, Dataset* dataset) {
 
 /**
  * Calculate the local k nearest neighbors (local knns) of multiple query points
- * given the dataset. Each thread handles one pair of a query and a query point.
+ * given the dataset. Each thread handles one pair of a query and a data point.
  *
  * Local k nearest neighbors means that for every thread block (x-dim. of the blocks) you
  * consider a subset of the dataset and then you calculate for every thread block the k
  * nearest neighbors in this subset. Hence, these nearest neighbors are not global but
- * only local. You do this for all qeury points (y-dim. of the thread blocks).
+ * only local. You do this for all query points (y-dim. of the thread blocks).
  *
  * @param k Number of neighbors to consider to determine the k nearest neighbors.
  * @param query_points Class instance storing the query points.
