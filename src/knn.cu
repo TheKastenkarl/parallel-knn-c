@@ -828,7 +828,7 @@ GREATEST_MAIN_DEFS();
 
 //This main function takes commandline arguments
 int main (int argc, char **argv) {
-  
+  srand(SEED); // seed
   //Wrapped in #ifndef so we can make a release version
   #ifndef NDEBUG
   //Setup required testing
@@ -843,17 +843,34 @@ int main (int argc, char **argv) {
 
   Classifier_List class_list = new_classifier_list();
 
-  my_string filename = read_string("Filename: ");
+  my_string filename;
+  strcpy(filename.str, PROFILING_DATASET); 
 
   //This is in user mode:
 
   Dataset generic_dataset = read_dataset_file(filename, &class_list);
 
   #if !EVALUATE
-  bool another_point = true;
+  #if MULTIPLEQUERYPOINTS
+  int another_point = NUMQUERYPOINTS;
+  #else
+  int another_point = 1;
+  #endif
+  #if TIMER
+  clock_t start_total, end_total;
+  double time_used_total;
+  start_total = clock();
+  #endif
   do {
-    Comparison_Point compare = read_comparison_point_user(generic_dataset.dimensionality);
-    int k = read_integer("k: ");
+    Comparison_Point compare;
+    int num_dimensions = generic_dataset.dimensionality;
+    compare.dimension = (float*) malloc(num_dimensions*sizeof(float));
+    for (int i = 0; i < num_dimensions; i++) {
+      
+      compare.dimension[i] = i;
+    }
+    
+    int k = NUMNEIGHBOURS;
     #if CUDA
 
     #if TIMER
@@ -862,14 +879,36 @@ int main (int argc, char **argv) {
     start = clock();
     #endif
 
-    int* cpoint_classes= knn_search_parallel(k, &compare, 1, &generic_dataset);
-    int category = cpoint_classes[0];
+    Comparison_Point comparisonPoints[NUMQUERYPOINTS];
+
+    for (int i = 0; i < NUMQUERYPOINTS; i++) {
+      for (int j = 0; j < num_dimensions; j++) {
+      
+        compare.dimension[j] = rand() % 20;
+      }
+      comparisonPoints[i] = compare;
+      #if DEBUG
+      Point cpoint = {compare.dimension, -1};
+      printf("[DEBUG] Query point %d: ", i);
+      print_point(&cpoint, num_dimensions);
+      #endif
+    }
+
+    int* cpoint_classes = knn_search_parallel(k, comparisonPoints, NUMQUERYPOINTS, &generic_dataset);
+
+    int category;
+    for (int i = 0; i < NUMQUERYPOINTS; ++i) {
+      category = cpoint_classes[i];
+      my_string class_string = classify(class_list, category);
+      printf("Point number %d classified as: %s\n", i, class_string.str);
+    }
+
     free(cpoint_classes);
 
     #if TIMER
     end = clock();
     time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d k neigbours: %f \n", k, time_used);
+    printf("Time used for %d query points (k = %d neigbors): %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used);
     #endif
 
     #else
@@ -878,10 +917,12 @@ int main (int argc, char **argv) {
     clock_t start, end;
     double time_used;
     start = clock();
+    #endif
     int category = knn_search(k, compare, &generic_dataset);
+    #if TIMER
     end = clock();
     time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-    printf("Time used for %d k neigbours: %f \n", k, time_used);
+    printf("Time used for k = %d neigbors: %f \n", k, time_used);
     #endif
 
     #endif
@@ -891,12 +932,23 @@ int main (int argc, char **argv) {
     #if DEBUG
     printf("[DEBUG] Category is: %d\n", category);
     #endif
-
+    #if !CUDA
     my_string class_string = classify(class_list, category);
     printf("Point classified as: %s\n", class_string.str);
-    another_point = read_boolean("Classify another point? ");
-  } while(another_point);
+    another_point--;
+    #endif
+    #if CUDA
+    another_point = 0;
+    #endif
+  } while(another_point > 0);
+  #if TIMER
+  end_total = clock();
+  time_used_total = ((double) (end_total - start_total)) / CLOCKS_PER_SEC;
+  printf("Total time used for %d query points (k = %d neigbors): %f \n", NUMQUERYPOINTS, NUMNEIGHBOURS, time_used_total);
   #endif
+  #endif
+  
+
   #if EVALUATE
   for (int k = 1; k < generic_dataset.num_points; k = k + 2) {
     printf("k: %d, accuracy: %.4f\n", k, evaluate_knn(k, &generic_dataset));
