@@ -12,10 +12,10 @@ import pandas as pd
 
 # PARAMETERS:
 NUMBER_OF_ROWS_TO_SAMPLE_FROM = 1000000
-NUMBER_OF_ROWS_TO_SAMPLE = 10000 # must be smaller or equal to NUMBER_OF_ROWS_TO_SAMPLE_FROM
+NUMBER_OF_ROWS_TO_SAMPLE = 1000000 # must be smaller or equal to NUMBER_OF_ROWS_TO_SAMPLE_FROM
 NUMBER_OF_COLUMNS = 8 # all numerical columns = 18
-INPUT_FILE = "weather_data_south.csv"
-OUTPUT_FILE = "weather_data_south_prepared.csv"
+INPUT_FILE = "weather_south_10m.csv"
+OUTPUT_FILE = "weather_south_1m.csv"
 
 # Numerical column names + class column name ("station")
 relevant_column_names = ["PRECIPITAÇÃO TOTAL, HORÁRIO (mm)","PRESSAO ATMOSFERICA AO NIVEL DA ESTACAO, HORARIA (mB)",
@@ -27,7 +27,7 @@ relevant_column_names = ["PRECIPITAÇÃO TOTAL, HORÁRIO (mm)","PRESSAO ATMOSFER
     "VENTO, VELOCIDADE HORARIA (m/s)", "height", "station"]
 
 # sample NUMBER_OF_COLUMNS columns
-relevant_column_names[:-1] = random.sample(relevant_column_names[:-1], NUMBER_OF_COLUMNS)
+relevant_column_names[:-1] = random.sample(relevant_column_names[:-2], NUMBER_OF_COLUMNS)
 
 # read in NUMBER_OF_COLUMNS columns and NUMBER_OF_ROWS_TO_SAMPLE_FROM rows from csv file
 df = pd.read_csv(INPUT_FILE, header=0, nrows=NUMBER_OF_ROWS_TO_SAMPLE_FROM, usecols=relevant_column_names)
